@@ -12,6 +12,7 @@ from math import log10
 import asyncio
 import aiohttp
 import aiofiles
+import queue
 
 
 class ApiBasisConfig:
@@ -28,6 +29,7 @@ class ApiBasisConfig:
     def __init__(self, fetch_time_length: int = 20, fetch_time_scale: str='Y'):
         self.fetch_time_length = fetch_time_length
         self.fetch_time_scale = fetch_time_scale
+        self.api_queue = queue.Queue(maxsize=1000)
 
     @property
     def diff(self) -> Tuple[int, str]:
@@ -99,26 +101,23 @@ class ApiBasisConfig:
             'Date_1', 'Code_2', 
         ]
         return DROP_COLS
-
-
-    def _fetch_one_resp(self, date: str, endpt: str, headers: Dict[str, str], base_url: str) -> List[Dict[str, Any]]:
-        resp = requests.get(
-            "%s/%s" % (base_url, endpt),
-            params  = {"date": date},
-            headers = headers,
-        )
-        resp = resp.json()['data']
-        return resp
-
-
-    def fetch_all_resp(self, date: str) -> Dict[str, Dict[str, List[Dict]]]:
-        resp_dict = {'base': {}, 'additional': {}}
-        for endpt in self.endpts_base_list:
-            resp_dict['base'][endpt] = self._fetch_one_resp(date, endpt, self.headers, self.base_url)
-        for endpt in self.endpts_additional_list:
-            resp_dict['additional'][endpt] = self._fetch_one_resp(date, endpt, self.headers, self.base_url)
-        return resp_dict
-
+        
+    # APIによる取得がボトルネック
+    async def api_Producer(self, endpt: str, base_url: str) -> List[Dict[str, Any]]:
+        headers = self.headers
+        async with aiohttp.ClientSession() as session:
+            for date, endpt in self.endpts_base_list + self.endpts_additional_list:
+                async with session.get(
+                    "%s/%s" % (base_url, endpt),
+                    params  = {"date": date},
+                    headers = headers,
+                ) as resp:
+                    await self.api_queue.put((date, await resp.json()['data']))
+            await self.api_queue.put(None)  # 終了シグナル
+    
+    async def api_Consumer(self):
+        return 
+    
 
 class DownloadIterationCheckCondition:
 
