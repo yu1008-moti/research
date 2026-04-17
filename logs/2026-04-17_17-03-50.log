@@ -1,0 +1,15 @@
+2026-04-17 17:03:50,626 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-05/markets_short-sale-report.csv
+2026-04-17 17:03:50,662 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-17/markets_short-sale-report.csv
+2026-04-17 17:03:50,669 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-11/markets_short-sale-report.csv
+2026-04-17 17:03:50,669 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-14/markets_short-sale-report.csv
+2026-04-17 17:03:50,684 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-08/markets_short-sale-report.csv
+2026-04-17 17:03:50,847 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-04/markets_short-sale-report.csv
+2026-04-17 17:03:50,963 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-07/markets_short-sale-report.csv
+2026-04-17 17:03:51,213 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-10/markets_short-sale-report.csv
+2026-04-17 17:03:51,480 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-13/markets_short-sale-report.csv
+2026-04-17 17:03:51,781 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-16/markets_short-sale-report.csv
+2026-04-17 17:03:52,935 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-03/markets_short-sale-report.csv
+2026-04-17 17:03:53,235 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-06/markets_short-sale-report.csv
+2026-04-17 17:03:53,396 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-09/markets_short-sale-report.csv
+2026-04-17 17:03:53,630 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-12/markets_short-sale-report.csv
+2026-04-17 17:03:53,917 - scripts.download_util_async - ERROR - No data for ./csv/2026-04-15/markets_short-sale-report.csv

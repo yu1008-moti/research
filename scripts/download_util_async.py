@@ -1,21 +1,28 @@
+import logging
+from urllib import response
+
+from matplotlib import dates
 import pandas as pd
 import requests
 from typing import Dict, List, Any
 from datetime import datetime as dt
+import time
 from dateutil.relativedelta import relativedelta as rdt
 from typing import Dict, List, Tuple
 import os
 import json
 from math import log10
-
+import itertools
 
 import asyncio
 import aiohttp
-import aiofiles
-import queue
+
+import sqlite3 as sql
+
+from logging import getLogger
 
 
-class ApiBasisConfig:
+class ApiLauncher:
     """
     APIからデータを取得する際の基本的な設定をまとめたクラス
         - endpts_list: APIのエンドポイントのリスト
@@ -26,10 +33,25 @@ class ApiBasisConfig:
         - このクラスを使用することで、APIからデータを取得する際のコードがよりシンプルで読みやすくなる
     """
 
-    def __init__(self, fetch_time_length: int = 20, fetch_time_scale: str='Y'):
+    def __init__(self, fetch_time_length: int = 20, fetch_time_scale: str='Y', async_semaphore_limit: int = 10, per_sec_rate_limit: int = 400) -> None:
         self.fetch_time_length = fetch_time_length
         self.fetch_time_scale = fetch_time_scale
-        self.api_queue = queue.Queue(maxsize=1000)
+        self.async_semaphore_limit = async_semaphore_limit
+        self.rate_limit = per_sec_rate_limit
+
+        self.api_queue = asyncio.Queue(maxsize=1000)
+        self.save_encoding = "utf-8"
+        self.last_called = 0
+        self.interval = 1 / self.rate_limit  # 500 req/s but some margin for error, so 400 req/s
+
+        logging.basicConfig(
+            filename=f"logs/{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}.log", 
+            level=logging.ERROR, 
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+
+        self.logger = getLogger(__name__)
+        
 
     @property
     def diff(self) -> Tuple[int, str]:
@@ -53,31 +75,31 @@ class ApiBasisConfig:
         return string_date_range
 
     @property
-    def endpts_base_list(self) -> List[str]:
-        """
-        0. 上場銘柄一覧 （equities/master）
-        1. 価格データ   （equities/bars/daily）
-        2. 財務情報     （fins/summary）
-        """
-        return list(map(lambda x: "/".join(x), [
-            ["equities", "master"],
-            ["equities", "bars", "daily"],
-        ]))
-    
-    @property
-    def endpts_additional_list(self) -> List[str]:
+    def endpts_list(self) -> List[str]:
         """
         追加で取得したいデータのエンドポイントをここに記載する
         例えば、財務情報を取得したい場合は、以下のように記載する
         """
         return list(map(lambda x: "/".join(x), [
-            ["equities", "investor-types"],
-            ["markets", "margin-interest"],
-            ["markets", "short-ratio"],
-            ["fins", "summary"],
-            ["fins", "details"],
-            ["fins", "dividend"],
-            ["indices", "bars", "daily"],
+            ["equities", "master"],                             # 上場銘柄一覧
+            ["equities", "bars", "daily"],                      # 株価四本値データ（日足）
+        ]))  + list(map(lambda x: "/".join(x), [
+            ["equities", "investor-types"],                     # 投資部門別情報
+            ["markets", "margin-interest"],                     # 信用取引週末残高
+            ["markets", "short-ratio"],                         # 業種別空売り比率
+            ["markets", "short-sale-report"],                   # 空売り残高報告
+            ["markets", "margin-alert"],                        # 日々公表信用取引残高
+            ["markets", "breakdown"],                           # 売買内訳データ
+            ["markets", "calendar"],                            # 取引カレンダー
+            ["indices", "bars", "daily"],                       # 指数四本値
+            ["indices", "bars", "daily", "topix"],              # TOPIXオプション四本値 
+            ["fins", "summary"],                                # 財務情報
+            ["fins", "details"],                                # 財務諸表（BS/PL/CF）
+            ["fins", "dividend"],                               # 配当金情報
+            ["equities", "earnings-calendar"],                  # 決算発表予定日
+            ["derivatives", "bars", "daily", "options", "225"], # 日経225オプション四本値
+            ["derivatives", "bars", "daily", "futures"],        # 先物四本値
+            ["derivatives", "bars", "daily", "options"]         # オプション四本値
         ]))
 
     @property
@@ -101,151 +123,88 @@ class ApiBasisConfig:
             'Date_1', 'Code_2', 
         ]
         return DROP_COLS
-        
-    # APIによる取得がボトルネック
-    async def api_Producer(self, endpt: str, base_url: str) -> List[Dict[str, Any]]:
-        headers = self.headers
-        async with aiohttp.ClientSession() as session:
-            for date, endpt in self.endpts_base_list + self.endpts_additional_list:
-                async with session.get(
-                    "%s/%s" % (base_url, endpt),
-                    params  = {"date": date},
-                    headers = headers,
-                ) as resp:
-                    await self.api_queue.put((date, await resp.json()['data']))
-            await self.api_queue.put(None)  # 終了シグナル
     
-    async def api_Consumer(self):
-        return 
-    
+    @property
+    def max_fetch_num(self) -> int:
+        return len(self.fetch_date_range) * len(self.endpts_list)
 
-class DownloadIterationCheckCondition:
-
-
-    def __init__(self, 
-                 dump_skip_date_json: bool,
-                fetch_time_length: int=20,
-                fetch_time_scale: str='Y'
-        ):
-        
-        self.df_one_before = pd.DataFrame()
-        self.skip_date_dict = {}
-        self.resp_dict = {}
-
-        # self.save_encoding = "shift-jis"
-        self.save_encoding = "utf-8"
-
-        self.dump_skip_date_json = dump_skip_date_json
-        self.ABC = ApiBasisConfig(fetch_time_length, fetch_time_scale)
-
-
-    def _price_data_empty_condition(self) -> bool:
-        prices_dict = self.resp_dict["base"][self.ABC.endpts_base_list[1]]
-        return False if prices_dict == [] else True
-
-
-    def _response_to_df(self, resp: List[Dict]) -> pd.DataFrame:
-        df = pd.DataFrame.from_records(resp)
-        return df
-
-
-    def _response_length_mismatch_condition(self) -> bool:
-        length_list = [len(df) for df in map(self._response_to_df, self.resp_dict["base"].values())]
-        length_set = set(length_list)
-        return False if len(length_set) != 1 else True
-
-
-    def _update_skip_date_dict(self, iter_n: int, date: str) -> None:
-        codes_df = self._response_to_df(self.resp_dict["base"][self.ABC.endpts_base_list[0]])
-        next_buisness_date = codes_df['Date'].iloc[0]
-        if next_buisness_date not in self.skip_date_dict:
-            self.skip_date_dict[next_buisness_date] = []
-        self.skip_date_dict[next_buisness_date].append((iter_n, date))
-        return
-
-
-    def _check_all_conditions(self) -> bool:
-        if not self._price_data_empty_condition():
-            return False
-        if not self._response_length_mismatch_condition():
-            return False
-        self.df_one_before = self._response_to_df(self.resp_dict["base"][self.ABC.endpts_base_list[0]]).copy()
-        return True
-    
-
-    def _save_base_df_to_csv(self, date: str) -> None:
-        base_df = pd.concat(map(self._response_to_df, self.resp_dict["base"].values()), ignore_index=False, axis=1)
-        base_df.to_csv("./csv/base/test_%s.csv" % date, index=False, encoding=self.save_encoding)
-        return
-
-
-    def _save_additional_df_to_csv(self, date: str) -> None:
-        for endpt, resp in self.resp_dict["additional"].items():
-            additional_df = self._response_to_df(resp)
-            dir_path = "./csv/additional/%s" % endpt.replace("/", "_")
+    def _get_file_path(self, date: str, endpt: str) -> str:
+        dir_path = f"./csv/{date}"
+        if not os.path.exists(dir_path):
             os.makedirs(dir_path, exist_ok=True)
-            additional_df.to_csv("%s/test_%s.csv" % (dir_path, date), index=False, encoding=self.save_encoding)
-        return
+        file_path = f"{dir_path}/{endpt.replace('/', '_')}.csv"
+        return file_path
 
+    async def _rate_limited(self):
+        now = time.time()
+        wait = self.interval - (now - self.last_called)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self.last_called = time.time()
 
-############ DownloadIterationCheckConditionクラスのメソッドの実装を続ける ############
+    # コルーチンが実行されるのはgatherの中で、fetch_respが完了するまで待機する
+    async def _fetch_resp(self, semaphore: asyncio.Semaphore, session: aiohttp.ClientSession, date: str, endpt: str) -> Tuple[str, str, Dict]:
+        url = "%s/%s" % (self.base_url, endpt)
+        params = {"date": date}
+        async with semaphore:
+            await self._rate_limited()
+            async with session.get(url=url, headers=self.headers, params=params) as response:
+                resp_data = await response.json()
+                return date, endpt, resp_data
 
+    async def _api_Producer(self) -> None:
+        semaphore = asyncio.Semaphore(self.async_semaphore_limit)  # Limit the number of concurrent requests
+        tasks = []
+        async with aiohttp.ClientSession() as session:
+            for date, endpt in itertools.product(self.fetch_date_range, self.endpts_list):
+                tasks.append(self._fetch_resp(semaphore, session, date, endpt))
 
-    def iter_contents_check_ok( 
-            self,
-            iter_n: int, 
-            date: str, 
-        ) -> bool:
+            for coroutine in asyncio.as_completed(tasks):
+                date, endpt, resp_data = await coroutine
+                # ここでresp_dataを処理する（例: APIキューに追加）
+                await self.api_queue.put((date, endpt, resp_data))
         
-        if self._check_all_conditions():
-            result = True
-        else:
-            result = False
-            self._update_skip_date_dict(iter_n, date)
-        
-        return result
+        await self.api_queue.put((None, None, None))  # Sentinel value to indicate completion
 
+    async def _api_Consumer(self) -> None:
+        cnt = 0
+        max_cnt = self.max_fetch_num
+        file_path_justified_length = max([len(self._get_file_path(date, endpt)) for date, endpt in itertools.product(self.fetch_date_range, self.endpts_list)])
+        log10_max_cnt = int(log10(max_cnt)) + 1
+        while True:
+            date, endpt, resp_data = await self.api_queue.get()
+            file_path = self._get_file_path(date, endpt)
 
-    def dump_skip_date_dict_to_json(self) -> None:
-        if self.dump_skip_date_json:
-            with open("./json/skip_date_dict.json", "w") as f:
-                json.dump(self.skip_date_dict, f, indent=4)
+            # ここでitemを処理する（例: CSVに保存）
+            if date is None:  # Sentinel valueを受け取ったら終了
+                break
+            if 'data' not in resp_data:
+                self.logger.error(f"No data for {self._get_file_path(date, endpt)}")
+                print(
+                f"\rNG {file_path.ljust(file_path_justified_length)} | time: {dt.now() - self.start_time} | progress: {str(cnt+1).rjust(log10_max_cnt)}/{str(max_cnt)} ({(cnt+1)/max_cnt*100:.2f}%)",
+                end=" "
+                )
+                cnt += 1
+                self.api_queue.task_done()
+                continue
+            df = pd.DataFrame.from_records(resp_data['data'])
+            df.to_csv(file_path, index=False, encoding=self.save_encoding)
+            # console display
+            print(
+                f"\rOK {file_path.ljust(file_path_justified_length)} | time: {dt.now() - self.start_time} | progress: {str(cnt+1).rjust(log10_max_cnt)}/{str(max_cnt)} ({(cnt+1)/max_cnt*100:.2f}%)",
+                end=" "
+            )
+            cnt += 1
+            self.api_queue.task_done()
+
+    async def _main(self) -> None:
+        self.start_time = dt.now()
+        producer_task = asyncio.create_task(self._api_Producer())
+        consumer_task = asyncio.create_task(self._api_Consumer())
+        await asyncio.gather(producer_task, consumer_task)
+
+    def start_download_async(self) -> None:
+        asyncio.run(self._main())
+        # self.dump_skip_date_dict_to_json()
         return
-
-
-    def save_df_to_csv(self, date: str) -> None:
-        # df = df.drop(columns=ABC.drop_cols)
-        self._save_base_df_to_csv(date)
-        self._save_additional_df_to_csv(date)
-        return
-
-
-    def display_download_status(self, data_name, iter_num, max_iter_num):
-        right_adjust_len = int(log10(max_iter_num)) + 1
-        print(f"\r Downloading data for {data_name} (iteration {str(iter_num).rjust(right_adjust_len, ' ')}/{str(max_iter_num).rjust(right_adjust_len, ' ')})", end=" ")
-
-
-    def download_data(self, dump_skip_date_json: bool=False, fetch_time_length: int=20, fetch_time_scale: str='Y') -> None:
-        """
-        1. 指定された期間の営業日ごとにAPIからデータを取得する．
-        2. 取得したデータをCSVファイルとして保存する．
-
-        Parameters
-        ----------
-        dump_skip_date_json : bool, optional
-            データ取得を見送った日付をJSONファイルとして保存するかどうか， by default False
-        fetch_time_length : int, optional
-            取得するデータの期間の数， by default 20
-        fetch_time_scale : str, optional
-            取得するデータの期間の時間スケール， by default 'Y' 
-            時間スケールは 'Y' (年), 'M' (月), 'D' (日) のいずれかを指定する．
-        """
-        fetch_date_range = self.ABC.fetch_date_range
-        for iter_n, date in enumerate(fetch_date_range, start=1):
-            self.display_download_status(date, iter_n, len(fetch_date_range))
-            self.resp_dict = self.ABC.fetch_all_resp(date)
-            if self.iter_contents_check_ok(iter_n, date):
-                self.save_df_to_csv(date)
-        self.dump_skip_date_dict_to_json()
-        return
-
+    
