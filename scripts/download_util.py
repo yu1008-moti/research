@@ -8,10 +8,10 @@ import os
 import json
 from math import log10
 
-# these modules are not used for now, 
-# but may be used in the future when we want to make asynchronous API calls
-# import asyncio
-# import aiohttp
+
+import asyncio
+import aiohttp
+import aiofiles
 
 
 class ApiBasisConfig:
@@ -122,6 +122,7 @@ class ApiBasisConfig:
 
 class DownloadIterationCheckCondition:
 
+
     def __init__(self, 
                  dump_skip_date_json: bool,
                 fetch_time_length: int=20,
@@ -223,4 +224,29 @@ class DownloadIterationCheckCondition:
     def display_download_status(self, data_name, iter_num, max_iter_num):
         right_adjust_len = int(log10(max_iter_num)) + 1
         print(f"\r Downloading data for {data_name} (iteration {str(iter_num).rjust(right_adjust_len, ' ')}/{str(max_iter_num).rjust(right_adjust_len, ' ')})", end=" ")
+
+
+    def download_data(self, dump_skip_date_json: bool=False, fetch_time_length: int=20, fetch_time_scale: str='Y') -> None:
+        """
+        1. 指定された期間の営業日ごとにAPIからデータを取得する．
+        2. 取得したデータをCSVファイルとして保存する．
+
+        Parameters
+        ----------
+        dump_skip_date_json : bool, optional
+            データ取得を見送った日付をJSONファイルとして保存するかどうか， by default False
+        fetch_time_length : int, optional
+            取得するデータの期間の数， by default 20
+        fetch_time_scale : str, optional
+            取得するデータの期間の時間スケール， by default 'Y' 
+            時間スケールは 'Y' (年), 'M' (月), 'D' (日) のいずれかを指定する．
+        """
+        fetch_date_range = self.ABC.fetch_date_range
+        for iter_n, date in enumerate(fetch_date_range, start=1):
+            self.display_download_status(date, iter_n, len(fetch_date_range))
+            self.resp_dict = self.ABC.fetch_all_resp(date)
+            if self.iter_contents_check_ok(iter_n, date):
+                self.save_df_to_csv(date)
+        self.dump_skip_date_dict_to_json()
+        return
 
