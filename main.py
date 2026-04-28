@@ -1,4 +1,4 @@
-from api.download import *
+from data.download import *
 
 def main():
     print("Hello from research!")
