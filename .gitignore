@@ -3,3 +3,6 @@ json/*
 logs/*
 sample_data/*
 test/*.ipynb
+test/*.csv
+test/*.json
+test/.py
