@@ -1,4 +1,5 @@
 csv/*
 json/*
 logs/*
-test/*
+sample_data/*
+test/*.ipynb
