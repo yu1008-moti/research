@@ -2,9 +2,9 @@ csv/*
 json/*
 logs/*
 sample_data/*
-all_data/*
 test/data/*
 test/*.csv
 test/*.npy
 evacuated_data/*
 masks/*.npy
+src_data/*
