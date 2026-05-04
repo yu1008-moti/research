@@ -2,7 +2,9 @@ csv/*
 json/*
 logs/*
 sample_data/*
-test/*.ipynb
+all_data/*
+test/data/*
 test/*.csv
-test/*.json
-test/.py
+test/*.npy
+evacuated_data/*
+masks/*.npy
