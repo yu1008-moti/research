@@ -1,10 +1,16 @@
 csv/*
+data_raw/*
 json/*
 logs/*
-sample_data/*
+data_sample/*
 test/*.csv
 test/*.json
 test/data/*
 evacuated_data/*
 src_data/*
 masks/*
+data_financial/*
+data_output/*
+data_homogenous/*
+db/*
+log/*
