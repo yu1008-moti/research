@@ -4,7 +4,14 @@ from pathlib import Path
 from typing import Tuple, List, Dict, Iterator
 import sqlite3
 
-class HomogenousConstructor:
+class DBConstructor:
+    def __init__(self):
+        pass
+
+    def start_build(self):
+        pass
+
+class HomogenousDBConstructor(DBConstructor):
     def __init__(self, nparray_dir: Path, financial_data_dir: Path):
         self.nparray_dir = nparray_dir
         self.financial_data_dir = financial_data_dir
@@ -28,14 +35,15 @@ class HomogenousConstructor:
         return 
 
 
-    def build_db(self, db_name: str = "homogenous_data.db"):
+    def build_db(self, db_name: str = "homogenous_data.db", table_name: str = "tmp_table"):
         conn = sqlite3.connect(f"db/{db_name}")
-        self.homogenous_df.to_sql(f"db/{db_name}", conn, if_exists="replace", index=False)
+        self.homogenous_df.to_sql(f"{table_name}", conn, if_exists="replace", index=False)
         conn.close()
         print(f"Database {db_name} created successfully.")
         return 
+        
 
-    def start_build(self, db_name: str):
+    def start_build(self, db_name: str, table_name: str = "tmp_table"):
         store_df:List[pd.DataFrame] = []
         for equities_bars_daily, equities_master in self.iter_get_pathes():
             df_bars, df_master = pd.read_csv(equities_bars_daily), pd.read_csv(equities_master)
@@ -43,5 +51,5 @@ class HomogenousConstructor:
             store_df.append(concat_df)
         self.homogenous_df = pd.concat(store_df, ignore_index=True)
         self.column_type_change()
-        self.build_db(db_name)
+        self.build_db(db_name, table_name)
         return
