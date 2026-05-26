@@ -12,4 +12,4 @@ test/test_db/*.sqlite3
 test/test_output/*
 !test/test_output/.gitkeep
 
-md/*.md
+md/secret/*.md
