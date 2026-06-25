@@ -4,22 +4,28 @@ from pathlib import Path
 from typing import Tuple, List, Dict, Iterator
 import sqlite3
 
-class DBConstructor:
+class HomoDBConstructor:
     def __init__(self):
         pass
 
     def start_build(self):
         pass
 
-class HomogenousDBConstructor(DBConstructor):
-    def __init__(self, nparray_dir: Path, financial_data_dir: Path):
-        self.nparray_dir = nparray_dir
+class HeteroDBConstructor:
+    def init__(self):
+        pass
+
+    def start_build(self):
+        pass
+
+class PriceDBConstructor(HomoDBConstructor):
+    def __init__(self, financial_data_dir: Path):
         self.financial_data_dir = financial_data_dir
         self.homogenous_df: pd.DataFrame = pd.DataFrame()
         self.daily_dirs = [d for d in self.financial_data_dir.iterdir() if d.is_dir()]
 
 
-    def iter_get_pathes(self) -> Iterator[Tuple[Path, Path]]:
+    def iter_get_path(self) -> Iterator[Tuple[Path, Path]]:
         for i, dir in enumerate(self.daily_dirs, start=1):
             files = {f.stem:f for f in dir.iterdir() if f.suffix == ".csv"}
             equities_bars_daily = files["equities_bars_daily"]
@@ -45,7 +51,7 @@ class HomogenousDBConstructor(DBConstructor):
 
     def start_build(self, db_name: str, table_name: str = "tmp_table"):
         store_df:List[pd.DataFrame] = []
-        for equities_bars_daily, equities_master in self.iter_get_pathes():
+        for equities_bars_daily, equities_master in self.iter_get_path():
             df_bars, df_master = pd.read_csv(equities_bars_daily), pd.read_csv(equities_master)
             concat_df = df_master.merge(df_bars, on=["Date", "Code"], suffixes=("_master", "_bars"))
             store_df.append(concat_df)
@@ -53,3 +59,19 @@ class HomogenousDBConstructor(DBConstructor):
         self.column_type_change()
         self.build_db(db_name, table_name)
         return
+    
+class drv_fut_DBConstructor(HeteroDBConstructor):
+    def __init__(self, financial_data_dir: Path):
+        self.df: pd.DataFrame = pd.DataFrame()
+        self.daily_dirs = [d for d in financial_data_dir.iterdir() if d.is_dir()]
+    
+
+    def iter_get_path(self) -> Iterator[Path]:
+        for i, dir in enumerate(self.daily_dirs, start=1):
+            files = {f.stem:f for f in dir.iterdir() if f.suffix == ".csv"}
+            drv_ftr = files["derivatives_bars_daily_futures"]
+            print(f"\r Processed {drv_ftr}, {str(i).rjust(4)}/{len(self.daily_dirs)}", end="  ")
+            yield drv_ftr
+        return
+    
+    def build_db(self, db_name: str = "derivative_futures_data.db", table_name: str = "tmp_table"):
