@@ -1,18 +1,10 @@
 from scripts.data_processing.construct_db import *
+from typing import List
 
-def build_homogenous_db():
+def build_prc_db(symbols: List[str], table_name:str):
+    constructer = prc_DBConstructor(symbols, table_name)
+    constructer.start_build()
 
-    constructer = PriceDBConstructor(
-        financial_data_dir=Path("data_financial")
-    )
-
-    constructer.start_build(
-        db_name="homogenous_data.db", 
-        table_name="homogenous_table"
-    )
-
-def build_homogenous_features_parquet():
-    pass
-
-def build_heterogenous_db():
-    pass
+def build_drv_db(symbol:str, table_name:str):
+    constructer = drv_DBConstructor(symbol, table_name)
+    constructer.start_build()

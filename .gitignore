@@ -1,7 +1,14 @@
 data_raw/*
+
+
 logs/*
+!logs/.gitkeep
+
 masks/*
+!masks/.gitkeep
+
 db/*
+!db/.gitkeep
 
 data_financial/*
 data_output/*
@@ -13,3 +20,4 @@ test/test_output/*
 !test/test_output/.gitkeep
 
 md/secret/*.md
+!md/secret/.gitkeep
