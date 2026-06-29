@@ -33,11 +33,22 @@ class ApiLauncher:
         - このクラスを使用することで、APIからデータを取得する際のコードがよりシンプルで読みやすくなる
     """
 
-    def __init__(self, fetch_time_length: int = 20, fetch_time_scale: str='Y', async_semaphore_limit: int = 10, per_sec_rate_limit: int = 400) -> None:
+    def __init__(self, 
+                 fetch_time_length: int = 20, 
+                 fetch_time_scale: str='Y', 
+                 async_semaphore_limit: int = 10, 
+                 per_sec_rate_limit: int = 400,
+                 from_Date = "2008-05-07",
+                 to_Date = "2026-04-17",
+                 range_decision_type: str = "1"
+                 ) -> None:
         self.fetch_time_length = fetch_time_length
         self.fetch_time_scale = fetch_time_scale
         self.async_semaphore_limit = async_semaphore_limit
         self.rate_limit = per_sec_rate_limit
+        self.range_decision_type = range_decision_type
+        self.from_Date = from_Date
+        self.to_Date = to_Date
 
         self.api_queue = asyncio.Queue(maxsize=1000)
         self.save_encoding = "utf-8"
@@ -63,16 +74,23 @@ class ApiLauncher:
 
     @property
     def fetch_date_range(self) -> List[str]:
-        end_date = dt.today()
-        if self.fetch_time_scale == 'Y':
-            start_date = end_date - rdt(years=self.fetch_time_length)
-        if self.fetch_time_scale == 'M':
-            start_date = end_date - rdt(months=self.fetch_time_length)
-        if self.fetch_time_scale == 'D':
-            start_date = end_date - rdt(days=self.fetch_time_length)
-        datetime_date_range = pd.date_range(start=start_date, end=end_date, freq="D")
-        string_date_range = list(map(lambda x: x.strftime('%Y-%m-%d'), datetime_date_range))
+        if self.range_decision_type == "1":
+            end_date = dt.today()
+            if self.fetch_time_scale == 'Y':
+                start_date = end_date - rdt(years=self.fetch_time_length)
+            if self.fetch_time_scale == 'M':
+                start_date = end_date - rdt(months=self.fetch_time_length)
+            if self.fetch_time_scale == 'D':
+                start_date = end_date - rdt(days=self.fetch_time_length)
+            datetime_date_range = pd.date_range(start=start_date, end=end_date, freq="D")
+            string_date_range = list(map(lambda x: x.strftime('%Y-%m-%d'), datetime_date_range))
+        elif self.range_decision_type == "2":
+            start_date = dt.strptime(self.from_Date, '%Y-%m-%d')
+            end_date = dt.strptime(self.to_Date, '%Y-%m-%d')
+            datetime_date_range = pd.date_range(start=start_date, end=end_date, freq="D")
+            string_date_range = list(map(lambda x: x.strftime('%Y-%m-%d'), datetime_date_range))
         return string_date_range
+
 
     @property
     def endpts_list(self) -> List[str]:
@@ -157,6 +175,7 @@ class ApiLauncher:
         tasks = []
         async with aiohttp.ClientSession() as session:
             for date, endpt in itertools.product(self.fetch_date_range, self.endpts_list):
+
                 tasks.append(self._fetch_resp(semaphore, session, date, endpt))
 
             for coroutine in asyncio.as_completed(tasks):

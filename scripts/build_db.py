@@ -9,6 +9,22 @@ def build_drv_db(symbol:str, table_name:str):
     constructer = drv_DBConstructor(symbol, table_name)
     constructer.start_build()
 
+def build_inv_db(symbol:str, table_name:str):
+    constructer = inv_DBConstructor(symbol, table_name)
+    constructer.start_build()
+
+def build_idx_db(symbol:str, table_name:str):
+    constructer = idx_DBConstructor(symbol, table_name)
+    constructer.start_build()
+
+def build_mbd_db(symbol:str, table_name:str):
+    constructer = mbd_DBConstructor(symbol, table_name)
+    constructer.start_build()
+
+def build_fin_db(symbol:str, table_name:str):
+    constructer = fin_DBConstructor(symbol, table_name)
+    constructer.start_build()
+
 def sqlite2duckdb(symbol: str, table_name: str):
     converter = duckDBConverter(symbol, table_name)
     converter.start_convert()

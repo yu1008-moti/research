@@ -9,7 +9,12 @@ import sqlite3 as sql3
 import os
 
 
-__all__ = ["prc_DBConstructor", "drv_DBConstructor", "duckDBConverter"]
+__all__ = \
+[
+    "prc_DBConstructor", "drv_DBConstructor", "inv_DBConstructor", 
+    "idx_DBConstructor", "mbd_DBConstructor", "fin_DBConstructor", 
+    "duckDBConverter"
+]
 
 
 class duckDBConverter():
@@ -109,9 +114,12 @@ class duckDBConverter():
 
 class FromScratchDBConstructor(ABC):
     def __init__(self, symbol: str, table_name: str):
-        PATHS, self.MSG = paths(), msg()
+        PATHS, self.MSG, self.SQL = paths(), msg(), bld_sql(symbol)
 
         self.CSVDATA_STORE_DIR = PATHS.CSVDATA_STORE_DIR
+
+        # All files contain the same content
+        self.ALL_IS_SAME = self.SQL.ALL_IS_SAME
 
         self.symbol = symbol
         self.sqlite3_path = PATHS.SQLITE_STORE_DIR / f"{symbol}.db"
@@ -123,6 +131,9 @@ class FromScratchDBConstructor(ABC):
 
         self.daily_dirs = [d for d in self.CSVDATA_STORE_DIR.iterdir() if d.is_dir()]
 
+        if self.ALL_IS_SAME:
+            self.daily_dirs = [self.daily_dirs[-1]]
+
         exists_sqlite = self.sqlite3_path.exists()
         exists_duckdb = self.duckdb_path.exists()
 
@@ -130,7 +141,7 @@ class FromScratchDBConstructor(ABC):
             f"target symbol : {self.symbol}\n",            
             f"  - save db     : {self.sqlite3_path} {'[exists]' if exists_sqlite else '[not found]'}\n",
             f"  - table name  : {self.table_name} {'[exists]' if exists_duckdb else '[not found]'}\n",
-            # f"  - save duckdb : {self.duckdb_path}\n"
+            f"  - ALL SAME    : {self.ALL_IS_SAME}\n",
         )
 
         while wait := input(f"{self.MSG.build_db_start} (y/n): ").lower() != "y":
@@ -151,8 +162,11 @@ class FromScratchDBConstructor(ABC):
 
 
     def column_type_change(self):
-        self.df["Date"] = pd.to_datetime(self.df["Date"])
-        self.df["Code"] = self.df["Code"].astype(str)
+        for datelike_col in self.SQL.Datelike_cols:
+            self.df[datelike_col] = pd.to_datetime(self.df[datelike_col])
+        
+        for text_col in self.SQL.Text_cols:
+            self.df[text_col] = self.df[text_col].astype(str)
         return 
     
 
@@ -168,10 +182,10 @@ class FromScratchDBConstructor(ABC):
 
     def start_convert(self):
         dkdb_cvt = duckDBConverter(self.symbol, self.table_name)
-        if bld_sql().is_cvt:
-            print("denied: cannot convert database while building it.")
-        else:
+        if self.SQL.is_cvt:
             dkdb_cvt.start_convert()
+        else:
+            print("denied: cannot convert database while building it.")
         return
 
     @abstractmethod
@@ -226,6 +240,8 @@ class HeteroDBConstructor(FromScratchDBConstructor, ABC):
         for i, dir in enumerate(self.daily_dirs, start=1):
             p_dict = {f.stem:f for f in dir.iterdir() if f.suffix == ".csv"}
             p = p_dict[self.symbol]
+            if os.path.getsize(p) < 3:
+                continue
             self._processing_msg(p, i, self.daily_dirs)
             yield p
         return
@@ -235,10 +251,18 @@ class HeteroDBConstructor(FromScratchDBConstructor, ABC):
         store_df:List[pd.DataFrame] = []
         for p in self.iter_get_path():
             df = pd.read_csv(p)
+            df = df.replace(r"^\-$", float("nan"), regex=True)
+            df = df.replace(r"^\*$", float("nan"), regex=True)
             store_df.append(df)
         self.build_db(store_df)
         self.start_convert()
         return
+    
+
+
+#################################################################################################################
+# Concrete classes for building specific databases
+#################################################################################################################
 
 
 class prc_DBConstructor(HomoDBConstructor):
@@ -258,3 +282,38 @@ class drv_DBConstructor(HeteroDBConstructor):
     def start_build(self):
         super().start_build()
 
+
+class inv_DBConstructor(HeteroDBConstructor):
+    def __init__(self, symbol:str, table_name:str):
+        super().__init__(symbol=symbol, table_name=table_name)
+
+
+    def start_build(self):
+        super().start_build()
+
+
+class idx_DBConstructor(HeteroDBConstructor):
+    def __init__(self, symbol:str, table_name:str):
+        super().__init__(symbol=symbol, table_name=table_name)
+
+
+    def start_build(self):
+        super().start_build()
+
+
+class mbd_DBConstructor(HeteroDBConstructor):
+    def __init__(self, symbol:str, table_name:str):
+        super().__init__(symbol=symbol, table_name=table_name)
+
+
+    def start_build(self):
+        super().start_build()
+
+
+class fin_DBConstructor(HeteroDBConstructor):
+    def __init__(self, symbol:str, table_name:str):
+        super().__init__(symbol=symbol, table_name=table_name)
+
+
+    def start_build(self):
+        super().start_build()
