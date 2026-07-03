@@ -26,5 +26,5 @@ test/test_db/*
 test/test_sql/*
 !test/test_sql/.gitkeep
 
-md/secret/*.md
-!md/secret/.gitkeep
+md/*.md
+!md/.gitkeep

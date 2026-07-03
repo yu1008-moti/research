@@ -1,0 +1,8 @@
+{
+    "markdownlint.config": {
+        "no-inline-html": {
+            "allowed_elements": ["br", "img"]
+        },
+    },
+    "markdown.validate.enabled": true
+}
