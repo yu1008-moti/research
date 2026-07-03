@@ -16,7 +16,7 @@ uv run download_data_main.py
 
 ```python
 per_sec_rate_limit=5
-# 500req/min -> 8req/min -> buffered: 5req/min
+# 500req/min -> 8req/sec -> buffered: 5req/sec
 # According to your plan, you can change this limit-number
 ```
 
