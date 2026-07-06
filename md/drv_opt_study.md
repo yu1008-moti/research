@@ -90,6 +90,13 @@ WHERE Strike IS NOT NULL AND UnderPx IS NOT NULL
 log(UnderPx / Strike) AS Moneyness
 ```
 
+また，対数比を用いる根拠としては<br>
+
+- なぜ対数収益率が使われるのか【<https://note.com/cyclicgroup12/n/n49892ea21fbe>】
+- 相関をもつ二つの変数の比に対する解析【<https://www.jstage.jst.go.jp/article/jappstat/40/1/40_1_53/_pdf>】
+
+とはいえ，**妥当かどうかは一旦置いておいて，実際に効果かどうかは実証してみないと分からない** ので，今後の課題とする．<br>
+
 ---
 
 #### 1.2.4 VoVA と Vo の相関係数を確認する

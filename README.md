@@ -20,14 +20,18 @@ per_sec_rate_limit=5
 # According to your plan, you can change this limit-number
 ```
 
-また，データを取得した後，sqlite3／duckdbへデータを変換可能である．ちなみに私は duckdb がお気に入りである．duckdbへの変換をする場合は，以下のコードを実行してほしい．ちなみに，以下のコードは例なので，用途に応じてフラグや引数を変える必要がある．今回は，先物データを sqlite3 形式で保存した後，続けて duckdb 形式に保存している．constant.py ファイルの設定を変更すると１行目だけで済むのだが，変更は推奨しない．
+また，データを取得した後，sqlite3／duckdbへデータを変換可能である．ちなみに私は duckdb がお気に入りである．duckdbへ変換する場合は，以下のコードを実行してほしい．ちなみに，以下のコードは例なので，用途に応じてフラグや引数を変える必要がある．今回は，先物データを sqlite3 形式で保存した後，続けて duckdb 形式に保存している．constant.py ファイルの設定を変更すると１行目だけで済むのだが，変更は推奨しない．
 
 ```bash
-uv run build_data_main.py -b drv -f
+uv run build_data_main.py -b drv -f 
 uv run build_data_main.py -c drv -f
 ```
 
 これで，先物データを duckdb で扱えるようになる．<br>
+
+## 使ってみたい・使えそうな技術・知見
+
+- Lee-Hanning の検定 <https://www.msi.co.jp/solution/stuaward/2010/10ibara.pdf>
 
 ## 注意事項
 
@@ -39,4 +43,4 @@ uv run build_data_main.py -c drv -f
 
 さらに，生データを断じて載せていない点は強調しておきたい．
 
-再三申し上げるが，J-Quants の API を利用する場合は，必ず契約を行うこと．
+再三申し上げるが，J-Quants の API を利用する場合は，必ず **各人単位** にて契約を行うこと．
