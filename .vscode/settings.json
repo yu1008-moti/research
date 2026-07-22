@@ -4,5 +4,5 @@
             "allowed_elements": ["br", "img", "details", "summary"]
         },
     },
-    "markdown.validate.enabled": true
+    "markdown.validate.enabled": true,
 }
