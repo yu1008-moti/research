@@ -25,3 +25,7 @@ test/test_db/*
 
 test/test_sql/*
 !test/test_sql/.gitkeep
+
+*.duckdb
+*.db
+*.

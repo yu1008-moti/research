@@ -1,4 +1,4 @@
-CREATE OR REPLACE TABLE eqt_main_tmp AS
+--- CREATE OR REPLACE TABLE eqt_main_tmp AS
   WITH 
   base AS(
     SELECT
