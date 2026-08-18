@@ -17,15 +17,12 @@ data_financial/*
 data_output/*
 data_homogenous/*
 
-test/test_output/*
-!test/test_output/.gitkeep
+notebooks/*.ipynb
+notebooks/*/*
+!notebooks/*/.gitkeep
 
-test/test_db/*
-!test/test_db/.gitkeep
-
-test/test_sql/*
-!test/test_sql/.gitkeep
+scripts/data_processing/store/*.parquet
 
 *.duckdb
 *.db
-*.
+*.sqlite

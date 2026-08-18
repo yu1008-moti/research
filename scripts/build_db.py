@@ -1,4 +1,4 @@
-from scripts.data_processing.construct_db import *
+from scripts.data_processing.db import *
 from typing import List
 
 def build_prc_db(symbols: List[str], table_name:str):

@@ -1,11 +1,4 @@
-import scripts.construct_edge as ce
-import scripts.construct_node as cn
-
-import sys
+import scripts.construct_graph as cg
 
 if __name__ == "__main__":
-    target = sys.argv[1]
-    if target == "edge":
-        ce.register_edges()
-    elif target == "node":
-        cn.register_nodes()
+    Sp_Mat_firm2firm, Sp_Mat_fin2firm, Tm_Mat_firm2firm, Tm_Mat_fin2fin = cg.construct_graph()
