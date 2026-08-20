@@ -1,4 +1,5 @@
-from scripts.data_processing.db import *
+from scripts.datap.db.constructor import *
+from scripts.datap.db.base.cvt import duckDBConverter
 from typing import List
 
 def build_prc_db(symbols: List[str], table_name:str):

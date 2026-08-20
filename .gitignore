@@ -1,28 +1,13 @@
-data_raw/*
+**/*.log
 
+**/*.duckdb
+**/*.db
+**/*.sqlite
+**/*.parquet
+**/*.pkl
+**/*.csv
+**/*.npy
 
-logs/*
-!logs/.gitkeep
+**/*.ipynb
 
-masks/*
-!masks/.gitkeep
-
-db/duckdb/*
-!db/duckdb/.gitkeep
-
-db/sqlite/*
-!db/sqlite/.gitkeep
-
-data_financial/*
-data_output/*
-data_homogenous/*
-
-notebooks/*.ipynb
-notebooks/*/*
-!notebooks/*/.gitkeep
-
-scripts/data_processing/store/*.parquet
-
-*.duckdb
-*.db
-*.sqlite
+!**/*.gitkeep

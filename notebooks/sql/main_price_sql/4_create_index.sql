@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS idx_code_date ON NullFilled_DropOrigin_OneHotEncoded_homogenous (Code, Date);
