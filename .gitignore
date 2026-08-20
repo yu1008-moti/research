@@ -1,5 +1,7 @@
+# Ignore all log files
 **/*.log
 
+# Ignore all database files
 **/*.duckdb
 **/*.db
 **/*.sqlite
@@ -8,6 +10,8 @@
 **/*.csv
 **/*.npy
 
+# Ignore all Jupyter Notebook files
 **/*.ipynb
 
+# Remain all .gitkeep files in the repository
 !**/*.gitkeep
