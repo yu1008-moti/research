@@ -9,6 +9,7 @@
 **/*.pkl
 **/*.csv
 **/*.npy
+**/*.*.wal
 
 # Ignore all Jupyter Notebook files
 **/*.ipynb

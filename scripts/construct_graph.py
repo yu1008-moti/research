@@ -3,12 +3,12 @@ import pickle
 from pathlib import Path
 import os
 
-from scripts.datap.graph.edge_matrix.spacial import SpacialEdgeMatrix as sem
-from scripts.datap.graph.edge_matrix.temporal import TemporalEdgeMatrix as tem
-from scripts.datap.graph.edge_matrix.constructor.spacial_c import Spacial
-from scripts.datap.graph.edge_matrix.constructor.temporal_c import Temporal
-from scripts.datap.graph.cons import train_constants as ct
-from scripts.datap.graph.cons import print_constants as cp
+from scripts.datap.graph_v2.tools.edge_matrix.spacial import SpacialEdgeMatrix as sem
+from scripts.datap.graph_v2.tools.edge_matrix.temporal import TemporalEdgeMatrix as tem
+from scripts.datap.graph_v2.tools.edge_matrix.constructor.spacial_c import Spacial
+from scripts.datap.graph_v2.tools.edge_matrix.constructor.temporal_c import Temporal
+from scripts.datap.graph_v2.tools.cons import train_constants as ct
+from scripts.datap.graph_v2.tools.cons import print_constants as cp
 
 def construct_graph(
         threshold: float,

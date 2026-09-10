@@ -1,8 +1,8 @@
 import pandas as pd
 from string import Template
 import duckdb as db
-from scripts.datap.graph.cons import related_fetch as cf
-from scripts.datap.graph.cons import train_constants as ct
+from scripts.datap.graph_v2.graph_v1.cons import related_fetch as cf
+from scripts.datap.graph_v2.graph_v1.cons import train_constants as ct
 
 class fetch:
 

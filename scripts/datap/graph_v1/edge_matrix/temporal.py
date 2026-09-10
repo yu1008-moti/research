@@ -1,7 +1,7 @@
 import torch
 from typing import Tuple
 
-from scripts.datap.graph.edge_matrix.element import NodeSet
+from scripts.datap.graph_v1.edge_matrix.element import NodeSet
 
 class TemporalEdgeMatrix:
     """時間方向のエッジ行列を表すクラス
