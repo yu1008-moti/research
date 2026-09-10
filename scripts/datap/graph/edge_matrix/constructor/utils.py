@@ -26,35 +26,33 @@ class u_common:
             sparse_Node2Node_edge_matrix (Optional[torch.Tensor], optional): 現在処理中の疎行列. Defaults to None.
         """
         sentence_stack:List[str] = []
+        sentence_stack.append('\r')
 
         if procssing_ratio is None:
-            # sentence_stack.insert(0, f'\r{Constants.CLEAR}')
-            sentence_stack.insert(0, '\r')
             end = " "
-        elif procssing_ratio < 1.0:
-            # sentence_stack.insert(0, f'\r{Constants.CLEAR}')
-            sentence_stack.insert(0, '\r')
-            end = " "
-        else:
+        elif procssing_ratio == 1.0:
             end = "\n"
+        else:
+            end = " "
 
-        sentence_stack.append(f"Processing [{pc.MAGENTA}{Task_Summary}{pc.RESET}] ")
+        sentence_stack.append(f"TASK [{pc.MAGENTA}{Task_Summary}{pc.RESET}] ")
         
         if week_id is not None:
-            sentence_stack.append(f"Week ID: {week_id}")
-
+            sentence_stack.append(f"week_id: {pc.CYAN}{week_id}{pc.RESET}")
         if sparse_Node2Node_edge_matrix is not None:
-            sentence_stack.append(f"Firm - Firm Graph Shape: {sparse_Node2Node_edge_matrix.shape}")
-            sentence_stack.append(f"Non-zero elements: {str(sparse_Node2Node_edge_matrix._nnz()).rjust(4)}")
+            sentence_stack.append(f"G Shape: {pc.CYAN}{sparse_Node2Node_edge_matrix.shape[0]} x {sparse_Node2Node_edge_matrix.shape[1]}{pc.RESET}")
+            sentence_stack.append(f"NNZ: {pc.CYAN}{str(sparse_Node2Node_edge_matrix._nnz()).rjust(4)}{pc.RESET}")
 
         if procssing_ratio is not None:
             rounded_procssing_ratio = str(round(procssing_ratio*100, 2)).rjust(6)
-            sentence_stack.append(f"Processing Ratio: {rounded_procssing_ratio}%")
+            sentence_stack.append(f"Progress: {pc.CYAN}{rounded_procssing_ratio}%{pc.RESET}")
 
         print(
             *sentence_stack,
             end=end
         )
+
+        return
 
 
     @staticmethod
@@ -64,3 +62,5 @@ class u_common:
             f"Title: [{pc.MAGENTA}{note_title}{pc.RESET}]: ",
             f"{content}"
         )
+
+        return

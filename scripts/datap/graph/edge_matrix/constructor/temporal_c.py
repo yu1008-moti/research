@@ -5,7 +5,7 @@ import numpy as np
 
 from scripts.datap.graph.edge_matrix.element import NodeSet
 from scripts.datap.graph.cons import train_constants as tc
-from scripts.datap.graph.edge_matrix.temporal import TemporalEdgeMatrix as tem
+from scripts.datap.graph.edge_matrix.temporal import TemporalEdgeMatrix
 from scripts.datap.graph.edge_matrix.constructor.utils import u_common
 
 
@@ -165,6 +165,7 @@ class Temporal:
             firm_id_order: pd.Index,
             result_fetched_prices: pd.DataFrame,
             result_fetched_financials: pd.DataFrame,
+            first_week_id: int = tc.FIRST_WEEK_ID,
             ):
 
         # Initialize by arguments
@@ -178,16 +179,17 @@ class Temporal:
         self.temporal_firm2firm_edge_list : list[Tuple[int, int, torch.Tensor]] = []
         self.temporal_fin2firm_edge_list : list[Tuple[int, int, torch.Tensor]] = []
         self.temporal_fin2fin_edge_list : list[Tuple[int, int, torch.Tensor]] = []
-        self.first_week_id : int = tc.FIRST_WEEK_ID
+        self.first_week_id : int = first_week_id
+        self.device : str = tc.DEVICE
 
 
-    def register_firm2firm_edge(self) -> tem:
+    def register_firm2firm_edge(self) -> TemporalEdgeMatrix:
         firm_prices_exists_matrix = self.result_fetched_prices.pivot(index="week_id", columns="Code", values="AdjO")[self.firm_id_order]
         Node_ax1 = NodeSet(self.firm_id_order, "Firm")
         Node_ax2 = NodeSet(self.firm_id_order, "Firm")
         for procssing_ratio, previous_week_id, current_week_id, sparse_firm2firm_edge_matrix in _utils_firm2firm._iter_temporal_firm2firm_matrix(
             firm_prices_exists_matrix, 
-            device=tc.DEVICE, 
+            self.device, 
             firm_id_order=self.firm_id_order
             ):
             if current_week_id < self.first_week_id:
@@ -202,20 +204,20 @@ class Temporal:
             )
 
             self.temporal_firm2firm_edge_list.append((previous_week_id, current_week_id, sparse_firm2firm_edge_matrix))  # 疎行列のみ保持
-        return tem(self.temporal_firm2firm_edge_list, Node_ax1, Node_ax2)
+        return TemporalEdgeMatrix(self.temporal_firm2firm_edge_list, Node_ax1, Node_ax2)
 
     
     def register_fin2firm_edge(self) -> None: # -> TemporalEdgeMatrix:
         pass
 
 
-    def register_fin2fin_edge(self) -> tem:
+    def register_fin2fin_edge(self) -> TemporalEdgeMatrix:
         fin_report_exists_matrix = self.result_fetched_financials.pivot(index="week_id", columns="Code", values="CurPerType")
         Node_ax1 = NodeSet(self.firm_id_order, "Fin")
         Node_ax2 = NodeSet(self.firm_id_order, "Fin")
         for procssing_ratio, _, current_week_id, sparse_fin2fin_edge_matrix in _utils_fin2fin._iter_temporal_fin2fin_matrix(
             fin_report_exists_matrix, 
-            device=tc.DEVICE, 
+            self.device, 
             firm_id_order=self.firm_id_order
         ):
             if current_week_id < self.first_week_id:
@@ -230,5 +232,5 @@ class Temporal:
             )
 
             self.temporal_fin2fin_edge_list.append((0, current_week_id, sparse_fin2fin_edge_matrix))  # 疎行列のみ保持
-        return tem(self.temporal_fin2fin_edge_list, Node_ax1, Node_ax2)
+        return TemporalEdgeMatrix(self.temporal_fin2fin_edge_list, Node_ax1, Node_ax2)
 

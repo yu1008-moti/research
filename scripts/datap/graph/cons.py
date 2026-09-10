@@ -23,4 +23,5 @@ class print_constants:
     # COLOR FOR PRINT FUNCTION
     CLEAR = '\033[2K'
     MAGENTA = '\033[35m'
+    CYAN = '\033[36m'
     RESET = '\033[0m'
