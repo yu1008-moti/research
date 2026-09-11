@@ -8,10 +8,10 @@ import statsmodels.api as sm
 from typing import Optional
 
 from scripts.datap.graph_v1.cons import train_constants as tc
-from scripts.datap.graph_v2.tools.sql import fetch
-from scripts.datap.graph_v2.tools.edge_matrix.element import NodeSet
-from scripts.datap.graph_v2.tools.edge_matrix.spacial import SpacialEdgeMatrix
-from scripts.datap.graph_v2.tools.edge_matrix.constructor.utils import u_common
+from scripts.datap.graph_v1.sql import fetch
+from scripts.datap.graph_v1.edge_matrix.element import NodeSet
+from scripts.datap.graph_v1.edge_matrix.spacial import SpacialEdgeMatrix
+from scripts.datap.graph_v1.edge_matrix.constructor.utils import u_common
 
 
 class _utils_firm2firm:

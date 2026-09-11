@@ -22,7 +22,7 @@ graph_v1 との違い:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterator, List, NamedTuple, Optional, Tuple
+from typing import Iterator, List, NamedTuple, Optional, Tuple, Dict
 
 import numpy as np
 import pandas as pd
@@ -66,7 +66,7 @@ class FirmCorrEdges(NamedTuple):
     """
 
     firm_id_order: pd.Index
-    edges: dict
+    edges: Dict[int, Tuple[torch.Tensor, torch.Tensor]]  # week_id -> (edge_index, edge_weight)
 
 
 # --------------------------------------------------------------------------- #
@@ -117,9 +117,11 @@ def _rolling_capm_residual(
         market_ret: 市場の超過リターン系列 (r_m - r_f)。
         window: ローリングウィンドウのサイズ (週)。
     """
-    df = pd.concat([stock_ret, market_ret], axis=1, keys=["r_i", "r_m"]).dropna()
-    X = sm.add_constant(df["r_m"])
+    df = pd.concat([stock_ret, market_ret], axis=1, keys=["r_i", "r_m"])
+    X = sm.add_constant(data=df["r_m"])
 
+    # statsmodels の RollingOLS は窓長に満たない場合にエラーを出すので、窓長に満たない場合は通常の OLS を使う
+    # print(len(df), window, end=" ")
     rres = RollingOLS(endog=df["r_i"], exog=X, window=window).fit()
 
     fitted = rres.params["const"] + rres.params["r_m"] * df["r_m"]
@@ -156,7 +158,7 @@ def residual_matrix_from_prices(
         )
         return pd.read_parquet(cache_path)
 
-    prices_df = prices_df.copy()
+    prices_df = prices_df.copy().dropna()
     prices_df["residual"] = np.nan
     prices_df["beta"] = np.nan
 
@@ -170,7 +172,8 @@ def residual_matrix_from_prices(
             processing_ratio=(i + 1) / codes_length,
         )
 
-        filtered = prices_df[prices_df["Code"] == code]
+        mask: pd.Series = prices_df["Code"] == code
+        filtered = prices_df[mask]
         if len(filtered) < window_size_for_capm:
             unmatched_codes.append((code, len(filtered)))
             continue
