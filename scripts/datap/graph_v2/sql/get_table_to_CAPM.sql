@@ -27,7 +27,7 @@ add_ReturnValue AS(
   SELECT 
     *, 
     lag(DAdjC, 1) OVER w AS lagged_DAdjC, 
-    (DAdjC - lagged_DAdjC)/lagged_DAdjC AS r_i
+    (DAdjC - lagged_DAdjC)/lagged_DAdjC AS r_i,
   FROM day2week
   WINDOW w AS(
     PARTITION BY Code
@@ -40,11 +40,17 @@ weekly_eqt AS(
     isIPO, isUpL, isLoL,
     AdjO, AdjH, AdjL, AdjC, AdjVo,
     if(r_i IS NULL, 0, r_i) AS r_i, 
-    S33, S17, Mkt, Section_id, Mrgn
+    S33, S17, Mkt, Section_id, Mrgn,
+    lag(r_i, 1) OVER w AS r_i_next,
+    if(r_i_next>0, 1, 0) AS y
   FROM add_ReturnValue
   WHERE 
     -- Code = '13010' AND
     201000 < week_id AND 202600 > week_id
+  WINDOW w AS(
+    PARTITION BY Code
+    ORDER BY week_id
+  )
   ORDER BY week_id, Code
 ),
 topix AS(
@@ -90,6 +96,7 @@ join_topix_callrate AS(
   )
   ORDER BY week_id
 )
+
 SELECT
   w.week_id AS week_id, w.Code AS Code, 
   w.isIPO AS isIPO, w.isUpL AS isUpL, w.isLoL AS isLoL,
@@ -98,7 +105,8 @@ SELECT
   w.Mkt AS Mkt, w.Mrgn AS Mrgn,
   w.r_i AS r_i,
   j.r_m AS r_m,
-  j.r_f AS r_f
+  j.r_f AS r_f,
+  w.y
 FROM weekly_eqt w
 JOIN join_topix_callrate j
 ON w.week_id = j.week_id

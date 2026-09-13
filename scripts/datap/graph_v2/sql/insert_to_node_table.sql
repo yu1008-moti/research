@@ -1,3 +1,3 @@
-INSERT INTO graph_info.node (
+INSERT INTO node (
     SELECT * FROM data_list
 )
