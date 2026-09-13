@@ -18,5 +18,5 @@ CREATE OR REPLACE TABLE edge(
 CREATE OR REPLACE TABLE feats(
   node_id   VARCHAR  NOT NULL,
   feats     JSON NOT NULL,
-  feats_num INTEGER  NOT NULL
+  feats_num INTEGER  NOT NULL,
 );

@@ -18,14 +18,20 @@ class fetch:
     def prices() -> pd.DataFrame:
         with open(cf.PATH_SQL_TO_FETCH_PRICES, "r", encoding="utf-8") as f:
             # week_id の範囲は SQL 側にハードコードしてあるので置換は任意
-            EQUITY_FETCH_QUERY = Template(f.read()).safe_substitute()
+            EQUITY_FETCH_QUERY = Template(f.read()).safe_substitute(
+                START_WEEK_ID=cf.START_WEEK_ID,
+                END_WEEK_ID=cf.END_WEEK_ID
+            )
         return fetch._any(EQUITY_FETCH_QUERY, cf.PATH_ORIGINAL_DB)
 
     # SQL QUERY TO FETCH FINANCIAL DATA
     @staticmethod
     def financials() -> pd.DataFrame:
         with open(cf.PATH_SQL_TO_FETCH_FINANCIALS, "r", encoding="utf-8") as f:
-            FINANCIAL_STATEMENTS_FETCH_QUERY = Template(f.read()).safe_substitute()
+            FINANCIAL_STATEMENTS_FETCH_QUERY = Template(f.read()).safe_substitute(
+                START_WEEK_ID=cf.START_WEEK_ID,
+                END_WEEK_ID=cf.END_WEEK_ID
+            )
         return fetch._any(FINANCIAL_STATEMENTS_FETCH_QUERY, cf.PATH_ORIGINAL_DB)
 
 
@@ -46,6 +52,12 @@ class fetch:
     @staticmethod
     def node_attr(serial_id: int, attr_name: str) -> pd.DataFrame:
         QUERY = f"SELECT {attr_name} FROM node"
+        DB_NAME = cf.PATH_GRAPHINFO_DB.safe_substitute(serial_id=serial_id)
+        return fetch._any(QUERY, DB_NAME)
+    
+    @staticmethod
+    def node_table(serial_id: int, node_type: str) -> pd.DataFrame:
+        QUERY = f"SELECT n.*, f.feats FROM node n JOIN feats f ON n.node_id = f.node_id WHERE n.node_type = '{node_type}'"
         DB_NAME = cf.PATH_GRAPHINFO_DB.safe_substitute(serial_id=serial_id)
         return fetch._any(QUERY, DB_NAME)
 

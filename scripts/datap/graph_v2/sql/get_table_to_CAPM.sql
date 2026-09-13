@@ -39,14 +39,14 @@ weekly_eqt AS(
     week_id, Code,
     isIPO, isUpL, isLoL,
     AdjO, AdjH, AdjL, AdjC, AdjVo,
-    if(r_i IS NULL, 0, r_i) AS r_i, 
+    r_i, -- if(r_i IS NULL, 0, r_i) AS r_i, 
     S33, S17, Mkt, Section_id, Mrgn,
-    lag(r_i, 1) OVER w AS r_i_next,
+    lag(r_i, -1) OVER w AS r_i_next,
     if(r_i_next>0, 1, 0) AS y
   FROM add_ReturnValue
-  WHERE 
+  -- WHERE 
     -- Code = '13010' AND
-    201000 < week_id AND 202600 > week_id
+    -- 201000 < week_id AND 202600 > week_id
   WINDOW w AS(
     PARTITION BY Code
     ORDER BY week_id
@@ -59,8 +59,8 @@ topix AS(
     last(C) AS TOPIX_Close,
   FROM imp.idx_prc
   WHERE 
-    201000 < yearweek(TradeDate) AND 
-    202600 > yearweek(TradeDate) AND
+    -- 201000 < yearweek(TradeDate) AND 
+    -- 202600 > yearweek(TradeDate) AND
     IdxNm = 'TOPIX'  
   GROUP BY yearweek(TradeDate), Code
   ORDER BY week_id
@@ -78,8 +78,8 @@ call_rate AS(
       ) AS CallRate
     FROM store_others.call_rate
   )
-  WHERE 
-    201000 < week_id AND 202600 > week_id
+  -- WHERE 
+    -- 201000 < week_id AND 202600 > week_id
   GROUP BY week_id
 ),
 join_topix_callrate AS(
@@ -95,8 +95,9 @@ join_topix_callrate AS(
     ORDER BY t.week_id
   )
   ORDER BY week_id
-)
+),
 
+res AS(
 SELECT
   w.week_id AS week_id, w.Code AS Code, 
   w.isIPO AS isIPO, w.isUpL AS isUpL, w.isLoL AS isLoL,
@@ -112,3 +113,11 @@ JOIN join_topix_callrate j
 ON w.week_id = j.week_id
 -- WHERE $YEAR_START < w.week_id AND w.week_id < $YEAR_END
 ORDER BY week_id, Code
+)
+
+SELECT *
+FROM res
+WHERE week_id > $START_WEEK_ID AND week_id < $END_WEEK_ID
+-- Ideal params
+--  $YEAR_START = 200819
+--  $YEAR_END = 202616

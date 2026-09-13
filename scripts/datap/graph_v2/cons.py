@@ -3,7 +3,7 @@ from string import Template
 class rel_sql:
     ## DATABASE PATHS
     PATH_ORIGINAL_DB = "./db/synthesis/synthesis.duckdb"
-    PATH_GRAPHINFO_DB = Template("./scripts/datap/graph_v2/store/graph_info_${serial_id}.duckdb")
+    PATH_GRAPHINFO_DB = Template("./scripts/datap/graph_v2/DS/graph_info_${serial_id}.duckdb")
 
     ## SQL FILE PATHS
     PATH_SQL_TO_FETCH_PRICES = "./scripts/datap/graph_v2/sql/get_table_to_CAPM.sql"
@@ -16,5 +16,5 @@ class rel_sql:
     PATH_SQL_TO_CREATE_GRAPHINFO_TABLE = "./scripts/datap/graph_v2/sql/create_graph_info_table.sql"
 
     # SQL PARAMETERS
-    YEAR_START = 2011
-    YEAR_END = 2025
+    START_WEEK_ID = 200819
+    END_WEEK_ID = 202616

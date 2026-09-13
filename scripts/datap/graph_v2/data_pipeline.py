@@ -1,334 +1,559 @@
-from torch_geometric.data import HeteroData, InMemoryDataset
-from torch_geometric.loader import NeighborLoader, DataLoader
+"""
+data_pipeline_v2.py
 
-import torch
-from torch.utils.data import Subset
-from typing import List
+前回の指摘事項を反映した書き直し版。主な変更点：
 
-from scripts.datap.graph_v2.sql import fetch, insert, create
-from scripts.datap.graph_v2 import capm_corr
+1. [致命的バグ修正] process() 内で data_list を上書きしていた不具合を解消。
+   → そもそも train/val/test を「物理的に別ファイル」に分けるのをやめ、
+     全期間・全銘柄を含む「単一の HeteroData」を1つだけ保存する設計に変更。
+     split はロード時（get_loaders）にマスクで行うため、この種のバグが構造的に発生しない。
+
+2. [致命的バグ修正] process() が DB 存在チェックの if 文の中に
+   グラフ構築・保存まで全部ネストされていた問題を解消。
+   → DB 構築（raw data ingestion）と、.pt 生成（グラフ構築）を別ステップに分離。
+
+3. [致命的バグ修正] エッジタイプを単一文字列 'stock_corr_stock' のようなキーで
+   HeteroData に格納しており、NeighborLoader 側のタプルキーと一致しない問題を解消。
+   → 区切り文字を "__" に統一し、(src_type, relation, dst_type) の
+     3-tuple として一意にパースできるようにした。
+
+4. [設計不備の修正] ノード特徴量 (x)、is_target マスク、ノードの真の識別子
+   (node_id 文字列) が HeteroData に一切格納されていなかった問題を解消。
+   → fetch_node_table() で取得し、data[node_type].x / is_target / node_str_id
+     として明示的に格納する。
+
+   ★★★ 要確認 ★★★
+   fetch_node_table() は「エッジ側で使われている整数インデックスの順序」と
+   「特徴量テーブルの行の順序」が一致している前提で書いています。
+   実際の sql/fetch.py の実装（node_id 文字列 → 整数インデックスへの
+   マッピングをどこで行っているか）に応じて、この関数の中身を
+   調整してください。ここでは契約（インターフェース）だけ決め打ちにしています。
+
+5. [設計不備の修正] statement -> stock (report) の一方向エッジしか
+   存在しなかった問題を解消。REVERSE_RELATIONS で逆エッジを自動生成する。
+
+6. [設計変更] get_dataloader + get_neighbor_loader の二重バッチ化をやめ、
+   get_loaders() 一本に統合。NeighborLoader の input_nodes には
+   is_target マスクを渡すようにした（statement ノードや非対象銘柄が
+   バッチ生成の起点にならないようにするため）。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime as dt
+from typing import Dict, List, Tuple, TypedDict, cast
 
 import duckdb as db
 import numpy as np
 import pandas as pd
+import torch
+from torch_geometric.data import HeteroData, InMemoryDataset
+from torch_geometric.loader import NeighborLoader
 
-from datetime import datetime as dt
-import json
-import os
+from scripts.datap.graph_v2 import capm_corr
 from scripts.datap.graph_v2.cons import rel_sql as cf
+from scripts.datap.graph_v2.sql import create, fetch, insert
+
+# --------------------------------------------------------------------------
+# 逆エッジを自動生成したい関係。
+# {(src, rel, dst): 逆方向の relation 名}
+# 対称な関係（相関エッジなど）はここに入れない。
+# --------------------------------------------------------------------------
+REVERSE_RELATIONS: Dict[Tuple[str, str, str], str] = {
+    ("statement", "report", "stock"): "rev_report",
+}
+
+# --------------------------------------------------------------------------
+# カテゴリ変数・日付変数の列定義
+# ここに列挙した列だけが「特殊扱い」（Embedding / Time2Vec 用）になり、
+# それ以外の数値列はすべて連続値特徴量 x としてそのまま使われる。
+# --------------------------------------------------------------------------
+CATEGORICAL_COLUMNS: Dict[str, List[str]] = {
+    "stock": ["S33", "S17", "Section_id", "Mkt", "Mrgn"],
+    "statement": ["CurPerType"],
+}
+
+DATE_COLUMNS: Dict[str, List[str]] = {
+    "statement": ["CurFYEn"],
+}
+
+DEFAULT_VOCAB_DIR = "scripts/datap/graph_v2/DS/vocab"
+
+# Time2Vec など時間エンコーディングの基準日。
+# この日からの経過日数(float)を生の時間スカラーとしてモデルに渡す。
+TIME_ENCODING_EPOCH = pd.Timestamp("2000-01-01")
 
 
-def fetch_edge_index(serial_id: int) -> np.ndarray:
-    """エッジ情報をデータベースから取得する。（2,E）の形状の DataFrame を返す。
+def date_to_days_since_epoch(date_series: pd.Series) -> np.ndarray:
+    """日付列を TIME_ENCODING_EPOCH からの経過日数(float)に変換する。
+
+    ★ ここでは sin/cos 変換はしない。Time2Vec は周波数が学習パラメータ
+    なので、前処理側では「生の時間スカラー」を渡すだけにするのが正しい。
     """
-    return fetch.edge_index(serial_id).values.transpose()  # (2,E) の形状に変換する
+    ret = (pd.to_datetime(date_series) - TIME_ENCODING_EPOCH).dt.days.astype(np.float32).values
+    assert isinstance(ret, np.ndarray)
+    return ret
+
+
+def build_category_vocab(values) -> Dict[str, int]:
+    """カテゴリ列のユニーク値から {値の文字列: 整数ID} の辞書を作る。
+
+    末尾に "<UNK>" を追加しておくことで、vocab構築時に無かった値
+    （例: train期間には存在しなかった業種区分がval/testに出現した場合）
+    にも安全に対応できる。
+    """
+    unique_vals = sorted({str(v) for v in values})
+    vocab = {v: i for i, v in enumerate(unique_vals)}
+    vocab["<UNK>"] = len(vocab)
+    return vocab
+
+
+def encode_category(values, vocab: Dict[str, int]) -> np.ndarray:
+    """カテゴリ列を vocab を使って整数IDの配列に変換する。"""
+    unk = vocab["<UNK>"]
+    return np.array([vocab.get(str(v), unk) for v in values], dtype=np.int64)
+
+
+def vocab_path(vocab_dir: str, serial_id: int, node_type: str, column: str) -> str:
+    return os.path.join(vocab_dir, f"vocab_{serial_id}_{node_type}_{column}.json")
+
+
+def save_vocab(vocab: Dict[str, int], path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(vocab, f, ensure_ascii=False, indent=2)
+
+
+def load_vocab(path: str) -> Dict[str, int]:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def get_vocab_sizes(serial_id: int, node_type: str, vocab_dir: str = DEFAULT_VOCAB_DIR) -> Dict[str, int]:
+    """モデル側で nn.Embedding(num_embeddings=...) を構築する際に使う。
+    例: get_vocab_sizes(1, "stock") -> {"S33": 34, "S17": 18, ...}
+    """
+    sizes = {}
+    for col in CATEGORICAL_COLUMNS.get(node_type, []):
+        vocab = load_vocab(vocab_path(vocab_dir, serial_id, node_type, col))
+        sizes[col] = len(vocab)
+    return sizes
+
+
+def fetch_edge_index(serial_id: int) -> Tuple[np.ndarray, np.ndarray]:
+    """エッジ情報をデータベースから取得する。
+
+    戻り値は (src_node_id, dst_node_id) の2つの (E,) 文字列配列。
+    例: (['stock_11_1301', ...], ['stock_12_1301', ...])
+
+    ★ 重要: ここで返る中身は "stock_12_1301" のような文字列の node_id であり、
+    まだ整数インデックスではない。torch.tensor化する前に、必ず
+    build_node_id_to_idx() で作った辞書を通して map_edge_ids_to_idx() で
+    整数化すること。
+    """
+    df = fetch.edge_index(serial_id)  # 列: src_node_id, dst_node_id を想定
+    ret_src = df["src_node_id"].values.astype(str)
+    ret_dst = df["dst_node_id"].values.astype(str)
+
+    assert isinstance(ret_src, np.ndarray)
+    assert isinstance(ret_dst, np.ndarray)
+
+    return ret_src, ret_dst
+
 
 def fetch_edge_attr(serial_id: int, attr_name: str) -> np.ndarray:
-    """エッジの属性情報をデータベースから取得する。（E,）の形状の DataFrame を返す。
-    """
-    return fetch.edge_attr(serial_id, attr_name=attr_name).values.transpose().flatten()  # (E,) の形状に変換する
+    """エッジの属性情報をデータベースから取得する。(E,) の numpy 配列を返す。"""
+    return fetch.edge_attr(serial_id, attr_name=attr_name).values.transpose().flatten()
 
-def fetch_node_time_id(serial_id: int, attr_name: str) -> np.ndarray:
-    """ノードの時間情報をデータベースから取得する。（N,）の形状の DataFrame を返す。
+
+class NodeFeatsPayload(TypedDict):
+    """graph_node.feats 列に保存している JSON の構造。
+
+    json.loads() の戻り値は本来 Any であり型チェッカーが中身を追えないため、
+    parse_feats_json() でここに cast し、以降は辞書アクセスに型が付くようにする。
     """
-    return fetch.node_attr(serial_id, attr_name="time_id").values.transpose().flatten()  # (N,) の形状に変換する
+    cont: Dict[str, float]
+    cat: Dict[str, int]
+    date: Dict[str, float]
+
+
+def parse_feats_json(raw: str) -> NodeFeatsPayload:
+    """feats列のJSON文字列をパースし、NodeFeatsPayload型として扱えるようにする。"""
+    return cast(NodeFeatsPayload, json.loads(raw))
+
+
+def extract_cont(payload: NodeFeatsPayload) -> List[float]:
+    return list(payload["cont"].values())
+
+
+def extract_cat(payload: NodeFeatsPayload, cat_cols: List[str]) -> List[int]:
+    return [payload["cat"][c] for c in cat_cols]
+
+
+def extract_date(payload: NodeFeatsPayload, date_cols: List[str]) -> List[float]:
+    return [payload["date"][c] for c in date_cols]
+
+
+def fetch_node_table(serial_id: int, node_type: str) -> Dict[str, np.ndarray]:
+    """指定した node_type の全ノードを取得する。
+
+    node_id は "stock_12_1301" のような文字列で管理されているため、
+    ここでは DB 側に整数インデックス（node_idx）が存在することを前提にしない。
+    代わりに、node_id文字列でソートして「決定的な順序」を確定させ、
+    その並び順（0, 1, 2, ...）がそのままローカル整数インデックスになる。
+
+    feats列のJSON構造は {"cont": {...}, "cat": {...}, "date": {...}} を想定
+    （node_feats_define() が書き込む形式と対応させている）。
+
+    ★ 実際の DB スキーマに合わせて調整してください。
+    ここでは graph_node テーブルに次の列がある想定で書いています：
+        - node_id    : 'stock_1_1301' のような文字列ID（一意）
+        - is_target  : bool（損失計算・予測対象かどうか）
+        - time_id    : int（週インデックス。時系列split用）
+        - feats      : JSON文字列（cont/cat/date の3グループ）
+    """
+    df = fetch.node_table(serial_id, node_type=node_type)  # 要: fetch側に実装
+    # node_id 文字列で決定的にソートし、この並び順を「ローカル整数インデックス」とする
+    df = df.sort_values("node_id").reset_index(drop=True)
+
+    parsed: pd.Series = df["feats"].map(parse_feats_json)
+
+    # 連続値特徴量
+    cont_feats = np.stack(parsed.map(extract_cont).to_list())
+
+    # カテゴリ変数（列の順序は CATEGORICAL_COLUMNS[node_type] に固定する）
+    cat_cols = CATEGORICAL_COLUMNS.get(node_type, [])
+    if cat_cols:
+        cat_feats = np.stack(parsed.map(lambda p: extract_cat(p, cat_cols)).to_list())
+    else:
+        cat_feats = np.zeros((len(df), 0), dtype=np.int64)
+
+    # 日付特徴量（Time2Vec等に渡す生の時間スカラー）
+    date_cols = DATE_COLUMNS.get(node_type, [])
+    if date_cols:
+        date_feats = np.stack(parsed.map(lambda p: extract_date(p, date_cols)).to_list())
+    else:
+        date_feats = np.zeros((len(df), 0), dtype=np.float32)
+
+    return {
+        "x": cont_feats.astype(np.float32),
+        "cat_x": cat_feats.astype(np.int64),
+        "date_x": date_feats.astype(np.float32),
+        "is_target": df["is_target"].to_numpy(dtype=bool),
+        "time_id": df["time_id"].to_numpy(dtype=np.int64),
+        "node_str_id": df["node_id"].to_numpy(dtype=str),
+    }
+
+
+def build_node_id_to_idx(node_str_id: np.ndarray) -> Dict[str, int]:
+    """node_id文字列 -> ローカル整数インデックス の辞書を作る。
+
+    fetch_node_table() が返す node_str_id は既に「その並び順が
+    ローカルインデックスである」という契約になっているため、
+    単純に enumerate すればよい。
+    """
+    return {node_id: idx for idx, node_id in enumerate(node_str_id)}
+
+
+def map_edge_ids_to_idx(
+    src_ids: np.ndarray,
+    dst_ids: np.ndarray,
+    src_map: Dict[str, int],
+    dst_map: Dict[str, int],
+) -> np.ndarray:
+    """文字列の src/dst node_id 配列を、それぞれのノードタイプの
+    整数インデックスに変換し、(2, E) の numpy 配列を返す。
+
+    src_map に無い src_id / dst_map に無い dst_id が来た場合は例外を出す
+    （サイレントに握りつぶすと、後段でノード数不一致などの気づきにくい
+    バグにつながるため、ここで早期に検出する）。
+    """
+    try:
+        src_idx = np.array([src_map[s] for s in src_ids], dtype=np.int64)
+        dst_idx = np.array([dst_map[d] for d in dst_ids], dtype=np.int64)
+    except KeyError as e:
+        raise KeyError(
+            f"edge が参照している node_id がノードテーブルに存在しません: {e}. "
+            "ノード生成(node_id_define)とエッジ生成の対象範囲がズレている可能性があります。"
+        ) from e
+    return np.stack([src_idx, dst_idx], axis=0)
 
 
 class preprocess:
-    """データを前処理し、graph_node および graph_edge テーブルに格納する。
-    """
+    """データを前処理し、graph_node および graph_edge テーブルに格納する。"""
 
-    def __init__(self, financials_df: pd.DataFrame, prices_df: pd.DataFrame, serial_id: int = 1):
+    def __init__(self, financials_df: pd.DataFrame, prices_df: pd.DataFrame, serial_id: int = 1,
+                 vocab_dir: str = DEFAULT_VOCAB_DIR):
         self.financials_df = financials_df
         self.prices_df = prices_df
-        self.serial_id = serial_id  # データベースの識別子を設定する。必要に応じて変更する。
-        self.unique_week_id = sorted(set(financials_df['week_id'].unique()).union(set(prices_df['week_id'].unique())))
-
+        self.serial_id = serial_id
+        self.vocab_dir = vocab_dir
+        self.unique_week_id = sorted(
+            set(financials_df["week_id"].unique()).union(set(prices_df["week_id"].unique()))
+        )
 
     @property
     def get_unique_week_id(self) -> List[int]:
         return self.unique_week_id
 
-
-    ### 1. Related to graph_edge table
+    # ------------------------------------------------------------------
+    # 1. graph_edge に関する処理
+    # ------------------------------------------------------------------
     def stock_corr_stock_preprocess(self):
-        """銘柄間 CAPM 残差相関エッジを計算し、graph_edge テーブルに格納する。
-        """
-
+        """銘柄間 CAPM 残差相関エッジを計算し、graph_edge テーブルに格納する。"""
         prices_df = self.prices_df.copy()
-
         src, dst = 0, 1
 
-        # 銘柄間 CAPM 残差相関エッジ (週 ID -> (edge_index, edge_weight))
         firm_corr = capm_corr.build_firm_corr_edges(prices_df)
         firm_id_order = firm_corr.firm_id_order
 
-        # 銘柄間 CAPM 残差相関エッジを graph_edge テーブルに格納する
         for week_id, (edge_index, edge_weight) in sorted(firm_corr.edges.items()):
-
-            src_tk = []
-            dst_tk = []
-            src_node_id = []
-            dst_node_id = []
-            edge_id = []
-            edge_type = []
-            edge_weight_list = []
-            observable_time_id = []
-
             week_id = str(int(week_id))
 
-            src_tk = [firm_id_order[id-1] for id in edge_index[src].cpu().numpy()]
-            dst_tk = [firm_id_order[id-1] for id in edge_index[dst].cpu().numpy()]
+            src_tk = [firm_id_order[i - 1] for i in edge_index[src].cpu().numpy()]
+            dst_tk = [firm_id_order[i - 1] for i in edge_index[dst].cpu().numpy()]
             src_node_id = [f"stock_{week_id}_{code}" for code in src_tk]
             dst_node_id = [f"stock_{week_id}_{code}" for code in dst_tk]
-            edge_id = [f'stock_corr_stock_{week_id}_{src_tk[i]}_{dst_tk[i]}' for i in range(len(src_tk))]
-            edge_type = ['stock_corr_stock' for _ in range(len(src_tk))]
-            edge_weight_list = edge_weight.cpu().numpy().tolist()
-            observable_time_id = [int(week_id) for _ in range(len(src_tk))]
+            edge_id = [f"stock__corr__stock_{week_id}_{s}_{d}" for s, d in zip(src_tk, dst_tk)]
 
             insert.edge(pd.DataFrame({
-                "edge_id":edge_id, 
-                "edge_type":edge_type, 
-                # "src_node_type":src_node_type, 
-                # "dst_node_type":dst_node_type, 
-                "src_node_id":src_node_id, 
-                "dst_node_id":dst_node_id, 
-                "edge_weight_list":edge_weight_list, 
-                "observable_time_id":observable_time_id
+                "edge_id": edge_id,
+                # "__" 区切りで (src_type, relation, dst_type) を一意にパースできるようにする
+                "edge_type": ["stock__corr__stock"] * len(src_tk),
+                "src_node_id": src_node_id,
+                "dst_node_id": dst_node_id,
+                "edge_weight_list": edge_weight.cpu().numpy().tolist(),
+                "observable_time_id": [int(week_id)] * len(src_tk),
             }), self.serial_id)
 
-        # 同じ銘柄は1-step前の銘柄と現時点の銘柄の間にエッジを作る
-        for code in prices_df['Code'].unique():
-            mask :np.ndarray = prices_df['Code'] == code
-            code_df = prices_df[mask].copy()
+        # 同一銘柄の 1-step 前 -> 現時点 のエッジ（相関と同じ node type なので同じ relation にまとめる）
+        for code in prices_df["Code"].unique():
+            code_df = prices_df[prices_df["Code"] == code].copy()
 
-            src_tk = []
-            dst_tk = []
-            src_node_id = []
-            dst_node_id = []
-            edge_id = []
-            edge_type = []
-            edge_weight_list = []
-            observable_time_id = []
+            src_week = code_df["week_id"].shift(1).values[1:].astype(int).astype(str)
+            dst_week = code_df["week_id"].values[1:].astype(int).astype(str)
 
-            # (src) -> (dst)
-            src_node_time_indices = code_df['week_id'].shift(1).values[1:].astype(int).astype(str) # previous
-            dst_node_time_indices = code_df['week_id'].values[1:].astype(int).astype(str) # current
-
-            src_node_id = [f'stock_{week_id}_{code}' for week_id in src_node_time_indices]
-            dst_node_id = [f'stock_{week_id}_{code}' for week_id in dst_node_time_indices]
-            edge_id = [f'stock_corr_stock_{week_id}_{code}_{code}' for week_id in dst_node_time_indices]
-            edge_type = ['stock_corr_stock' for _ in range(len(src_node_id))]
-            edge_weight_list = [1.0 for _ in range(len(src_node_id))] # 同じ銘柄のエッジは重み1.0とする
-            observable_time_id = [int(week_id) for week_id in dst_node_time_indices]
+            src_node_id = [f"stock_{w}_{code}" for w in src_week]
+            dst_node_id = [f"stock_{w}_{code}" for w in dst_week]
+            edge_id = [f"stock__corr__stock_{w}_{code}_{code}" for w in dst_week]
 
             insert.edge(pd.DataFrame({
-                "edge_id":edge_id, 
-                "edge_type":edge_type, 
-                "src_node_id":src_node_id, 
-                "dst_node_id":dst_node_id, 
-                "edge_weight_list":edge_weight_list, 
-                "observable_time_id":observable_time_id
+                "edge_id": edge_id,
+                "edge_type": ["stock__corr__stock"] * len(src_node_id),
+                "src_node_id": src_node_id,
+                "dst_node_id": dst_node_id,
+                "edge_weight_list": [1.0] * len(src_node_id),
+                "observable_time_id": [int(w) for w in dst_week],
             }), self.serial_id)
-
 
     def statement_prev_statement_preprocess(self):
-        """銘柄と決算情報における，報告エッジの作成と graph_edge テーブルへの格納を行う。
-        """
-
+        """決算ノードの時系列エッジ（前期 -> 今期）を作成する。"""
         financials_df = self.financials_df.copy()
+        codes = financials_df["Code"].unique()
 
-        for i, code in enumerate(financials_df['Code'].unique(), start=1):
-            print(f"\rProcessing code: {code} ({i}/{len(financials_df['Code'].unique())})", end=" ")
-            mask :np.ndarray = financials_df['Code'] == code
-            code_df = financials_df[mask].copy()
+        for i, code in enumerate(codes, start=1):
+            print(f"\rProcessing code: {code} ({i}/{len(codes)})", end=" ")
+            code_df = financials_df[financials_df["Code"] == code].copy()
 
-            src_node_id = []
-            dst_node_id = []
-            edge_id = []
-            edge_type = []
-            # src_node_type = []
-            # dst_node_type = []
-            edge_weight_list = []
-            observable_time_id = []
+            src_week = code_df["week_id"].shift(1).values[1:].astype(int).astype(str)
+            dst_week = code_df["week_id"].values[1:].astype(int).astype(str)
 
-            # (src) -> (dst)
-            src_node_time_indices = code_df['week_id'].shift(1).values[1:].astype(int).astype(str) # previous
-            dst_node_time_indices = code_df['week_id'].values[1:].astype(int).astype(str) # current
-
-            src_node_id = [f'statement_{week_id}_{code}' for week_id in src_node_time_indices]
-            dst_node_id = [f'statement_{week_id}_{code}' for week_id in dst_node_time_indices]
-            edge_id = [f'statement_prev_statement_{week_id}_{code}_{code}' for week_id in dst_node_time_indices]
-            edge_type = ['statement_prev_statement' for _ in range(len(src_node_id))]
-            # src_node_type = ['statement' for _ in range(len(src_node_id))]
-            # dst_node_type = ['statement' for _ in range(len(src_node_id))]
-            edge_weight_list = [1.0 for _ in range(len(src_node_id))]
-            observable_time_id = [int(week_id) for week_id in dst_node_time_indices]
-
-            # １バッチでやると，確定で OutOfMemory になるので，1銘柄ごとに insert するquit
-            insert.edge(pd.DataFrame({
-                "edge_id":edge_id, 
-                "edge_type":edge_type, 
-                "src_node_id":src_node_id, 
-                "dst_node_id":dst_node_id, 
-                "edge_weight_list":edge_weight_list, 
-                "observable_time_id":observable_time_id
-            }), self.serial_id)
-
-
-    def stock_report_statement_preprocess(self):
-        """銘柄と決算情報における，報告エッジの作成と graph_edge テーブルへの格納を行う。
-        """
-
-        financials_df = self.financials_df.copy()
-
-        for code in financials_df['Code'].unique():
-            mask :np.ndarray = financials_df['Code'] == code
-            code_df = financials_df[mask].copy()
-
-            src_node_id = []
-            dst_node_id = []
-            edge_id = []
-            edge_type = []
-            edge_weight_list = []
-            observable_time_id = []
-
-            # (src) -> (dst)
-            src_node_time_indices = code_df['week_id'].values.astype(int).astype(str) # current
-            dst_node_time_indices = code_df['week_id'].values.astype(int).astype(str) # current
-
-            src_node_id = [f'statement_{week_id}_{code}' for week_id in dst_node_time_indices]
-            dst_node_id = [f'stock_{week_id}_{code}' for week_id in src_node_time_indices]
-            edge_id = [f'statement_report_stock_{week_id}_{code}_{code}' for week_id in dst_node_time_indices]
-            edge_type = ['statement_report_stock' for _ in range(len(src_node_id))]
-            edge_weight_list = [1.0 for _ in range(len(src_node_id))]
-            observable_time_id = [int(week_id) for week_id in dst_node_time_indices]
+            src_node_id = [f"statement_{w}_{code}" for w in src_week]
+            dst_node_id = [f"statement_{w}_{code}" for w in dst_week]
+            edge_id = [f"statement__prev__statement_{w}_{code}_{code}" for w in dst_week]
 
             insert.edge(pd.DataFrame({
-                "edge_id":edge_id, 
-                "edge_type":edge_type, 
-                "src_node_id":src_node_id, 
-                "dst_node_id":dst_node_id, 
-                "edge_weight_list":edge_weight_list, 
-                "observable_time_id":observable_time_id
+                "edge_id": edge_id,
+                "edge_type": ["statement__prev__statement"] * len(src_node_id),
+                "src_node_id": src_node_id,
+                "dst_node_id": dst_node_id,
+                "edge_weight_list": [1.0] * len(src_node_id),
+                "observable_time_id": [int(w) for w in dst_week],
+            }), self.serial_id)
+        print()
+
+    def statement_report_stock_preprocess(self):
+        """決算ノード -> 銘柄ノード への報告エッジを作成する。
+        (旧: stock_report_statement_preprocess。関数名と方向の矛盾を解消して改名)
+
+        ★ データ不整合対応（2013/07/16 東証・大証統合、名証→東証の個別上場替え等）
+        決算発表履歴はあるが対応する株価データが存在しない (week, code) の組が
+        1214銘柄で発生している（大証専売銘柄の統合前データ・他市場からの
+        上場替え銘柄など）。この場合 stock ノード自体が存在しないため、
+        report エッジを作るとダングリングエッジ（存在しないノードを指す
+        エッジ）になってしまう。
+
+        固定の日付（2013/07/16）で一律に区切ると、上場替えの時期が銘柄ごとに
+        異なる122銘柄（例: 5356, 5461）には対応できない。そのため、
+        「株価データが実在する (week, code) にのみエッジを張る」という
+        汎用的な存在チェックに一般化して対応する。
+
+        決算データ自体は削除しない。report エッジが無い期間の statement ノード
+        は孤立するが、statement__prev__statement のチェーンを通じて、
+        株価と接続される時点以降の statement ノードから多ホップで
+        参照可能なままなので、情報は失われない。
+        """
+        financials_df = self.financials_df.copy()
+        financials_df["week_id"] = financials_df["week_id"].astype(int)
+
+        prices_df = self.prices_df.copy()
+        prices_df["week_id"] = prices_df["week_id"].astype(int)
+
+        # 実在する (week_id, Code) の組だけを対象にする（inner join）
+        valid_pairs = prices_df[["week_id", "Code"]].drop_duplicates()
+        merged = financials_df.merge(valid_pairs, on=["week_id", "Code"], how="inner")
+
+        n_dropped = len(financials_df) - len(merged)
+        n_codes_dropped = financials_df["Code"].nunique() - merged["Code"].nunique()
+        print(
+            f"[statement_report_stock] 対応する株価データが無いため "
+            f"{n_dropped}件のreportエッジをスキップ（影響銘柄: 最大{n_codes_dropped}件）"
+        )
+
+        if merged.empty:
+            return
+
+        week = merged["week_id"].values.astype(str)
+        code = merged["Code"].values
+
+        src_node_id = [f"statement_{w}_{c}" for w, c in zip(week, code)]  # src = statement
+        dst_node_id = [f"stock_{w}_{c}" for w, c in zip(week, code)]      # dst = stock
+        edge_id = [f"statement__report__stock_{w}_{c}_{c}" for w, c in zip(week, code)]
+
+        insert.edge(pd.DataFrame({
+            "edge_id": edge_id,
+            "edge_type": ["statement__report__stock"] * len(src_node_id),
+            "src_node_id": src_node_id,
+            "dst_node_id": dst_node_id,
+            "edge_weight_list": [1.0] * len(src_node_id),
+            "observable_time_id": [int(w) for w in week],
             }), self.serial_id)
 
-
-    ### 2. Related to graph_node table
+    # ------------------------------------------------------------------
+    # 2. graph_node に関する処理
+    # ------------------------------------------------------------------
     def node_id_define(self):
-        """銘柄ノードと決算情報ノードの node_id を定義する。
-        """
-
-        using_df_list = [
-            (self.financials_df.copy(), "statement"), 
-            (self.prices_df.copy(), "stock")
-        ]
+        """銘柄ノードと決算情報ノードの node_id / is_target / time_id を定義する。"""
+        using_df_list = [(self.financials_df.copy(), "statement"), (self.prices_df.copy(), "stock")]
 
         for i, (df, node_type) in enumerate(using_df_list, start=1):
-
             print(f"Processing node_type: {node_type} ({i}/{len(using_df_list)})")
 
-            # 銘柄ノードの node_id を定義する
-            node_id = df.apply(lambda row: f'{node_type}_{str(int(row["week_id"]))}_{row["Code"]}', axis=1)
-            # 銘柄のティッカーを取得する
-            tickers = df['Code'].values
+            node_id = df.apply(lambda row: f'{node_type}_{int(row["week_id"])}_{row["Code"]}', axis=1)
+            tickers = df["Code"].values
 
-            # TODO: ターゲットノードかどうかを示す is_target を定義する
-            is_target = []
             if node_type == "stock":
-                is_target = (df["Mkt"] == "0000") | (df["Mkt"] == "0500")
-                is_target = is_target.astype(bool).tolist()
+                is_target = ((df["Mkt"] == "0000") | (df["Mkt"] == "0500")).astype(bool).tolist()
             else:
-                is_target = [False for _ in range(len(df))]
+                is_target = [False] * len(df)
 
-            node_type = [node_type for _ in range(len(df))]
-            time_indices = df['week_id'].values.astype(int)
-
-            # node_id, ticker, node_type, observable_time_id を graph_node テーブルに格納する
             insert.node(pd.DataFrame({
                 "node_id": node_id,
                 "is_target": is_target,
                 "ticker": tickers,
-                "node_type": node_type,
-                "time_id": time_indices
+                "node_type": [node_type] * len(df),
+                "time_id": df["week_id"].values.astype(int),
             }), self.serial_id)
 
+    # ------------------------------------------------------------------
+    # 3. カテゴリ変数の vocab 構築
+    # ------------------------------------------------------------------
+    def build_category_vocabs(self):
+        """カテゴリ列ごとに {値: 整数ID} の vocab を作り、ディスクに保存する。
 
-    ### 3. Related to node_feats table
-    def node_feats_define(self):
-        """銘柄ノードと決算情報ノードの特徴量を定義する。
-        バッチ処理によって， node_id, feats, feats_num を graph_node テーブルに格納する。
-        1. 銘柄ノードの特徴量は，株価データの各列を使用する。
-        2. 決算情報ノードの特徴量は，財務諸表データの各列を使用する。
-        3. バッチサイズは 1000 とする。
-        4. node_id, feats, feats_num を graph_node テーブルに格納する。
+        ★ ここでは train/val/test を分けずに全期間のデータから vocab を作る。
+        これは「未来の株価やラベルを覗き見ている」わけではなく、単に
+        「業種区分・市場区分としてどんな値が存在し得るか」という
+        カテゴリの世界観を定義しているだけなので、リークとは区別される。
+        （新しい業種が将来追加される可能性に備えて <UNK> 枠を用意している）
         """
+        using_df_list = [(self.financials_df, "statement"), (self.prices_df, "stock")]
+        for df, node_type in using_df_list:
+            for col in CATEGORICAL_COLUMNS.get(node_type, []):
+                vocab = build_category_vocab(df[col].values)
+                save_vocab(vocab, vocab_path(self.vocab_dir, self.serial_id, node_type, col))
+                print(f"[vocab] {node_type}.{col}: {len(vocab)} categories (UNK含む)")
 
-        using_df_list = [
-            (self.financials_df.copy(), "statement"), 
-            (self.prices_df.copy(), "stock")
-        ]
+    # ------------------------------------------------------------------
+    # 4. node_feats に関する処理
+    # ------------------------------------------------------------------
+    def node_feats_define(self):
+        """銘柄ノード・決算ノードの特徴量を graph_node テーブルに格納する。
+
+        feats 列には次の3グループに分けた JSON を保存する：
+            {"cont": {連続値特徴量}, "cat": {カテゴリの整数ID}, "date": {経過日数}}
+        - cont: そのままモデルの x として使う
+        - cat : モデル側で列ごとに nn.Embedding する（get_vocab_sizes()でサイズ取得）
+        - date: モデル側で Time2Vec 等の時間エンコーディングに渡す
+        """
+        using_df_list = [(self.financials_df.copy(), "statement"), (self.prices_df.copy(), "stock")]
 
         for i, (df, node_type) in enumerate(using_df_list, start=1):
-            if 'week_id' not in df.columns:
-                raise ValueError("DataFrame must contain 'week_id' column.")
-            if 'Code' not in df.columns:
-                raise ValueError("DataFrame must contain 'Code' column.")
+            if "week_id" not in df.columns or "Code" not in df.columns:
+                raise ValueError("DataFrame must contain 'week_id' and 'Code' columns.")
 
             print(f"Processing node_type: {node_type} ({i}/{len(using_df_list)})")
 
-            # duckdb がサポートしていないdatetime型の列を文字列に変換する
-            if 'CurFYEn' in df.columns:
-                df['CurFYEn'] = df['CurFYEn'].astype(str)
+            cat_cols = CATEGORICAL_COLUMNS.get(node_type, [])
+            date_cols = DATE_COLUMNS.get(node_type, [])
+            exclude_cols = {"week_id", "Code", *cat_cols, *date_cols}
+            cont_cols = [c for c in df.columns if c not in exclude_cols]
+
+            # カテゴリ列を事前に整数化（保存済みvocabを使用）
+            cat_encoded: Dict[str, np.ndarray] = {}
+            for col in cat_cols:
+                vocab = load_vocab(vocab_path(self.vocab_dir, self.serial_id, node_type, col))
+                cat_encoded[col] = encode_category(df[col].values, vocab)
+
+            # 日付列を経過日数(float)に変換
+            date_encoded: Dict[str, np.ndarray] = {}
+            for col in date_cols:
+                date_encoded[col] = date_to_days_since_epoch(df[col])
 
             for batch_start in range(0, len(df), 1000):
                 batch_end = min(batch_start + 1000, len(df))
                 print(f"\rProcessing batch: {batch_start} to {batch_end} ({i}/{len(using_df_list)})", end="")
 
                 df_batch = df.iloc[batch_start:batch_end]
-
-                # ノードIDを生成する
                 batch_node_id = df_batch.apply(
-                    lambda row: f'{node_type}_{str(int(row["week_id"]))}_{row["Code"]}', axis=1
+                    lambda row: f'{node_type}_{int(row["week_id"])}_{row["Code"]}', axis=1
                 )
+                df_cont_only = df_batch[cont_cols]
 
-                df_batch = df_batch.drop(columns=['week_id', 'Code'])
+                batch_feats = []
+                for row_pos in range(len(df_batch)):
+                    g = batch_start + row_pos  # 元dfにおけるグローバル行位置
+                    payload = {
+                        "cont": df_cont_only.iloc[row_pos].to_dict(),
+                        "cat": {col: int(cat_encoded[col][g]) for col in cat_cols},
+                        "date": {col: float(date_encoded[col][g]) for col in date_cols},
+                    }
+                    batch_feats.append(json.dumps(payload))
 
-                # 特徴量を JSON 形式で格納するために，DataFrame の各行を辞書に変換し，JSON 文字列に変換する
-                batch_feats = df_batch.assign(
-                    payload = df_batch
-                    .apply(lambda row: row.to_dict(), axis=1)
-                    .map(json.dumps)
-                )[['payload']].values.flatten()
+                batch_feats_num = [len(cont_cols)] * len(df_batch)
 
-                # 特徴量の数を計算する
-                batch_feats_num = [df_batch.shape[1] for _ in range(len(df_batch))]
-
-                # node_id, ticker, node_type, observable_time_id を graph_node テーブルに格納する
                 insert.feats(pd.DataFrame({
                     "node_id": batch_node_id,
                     "feats": batch_feats,
                     "feats_num": batch_feats_num,
                 }), self.serial_id)
-            print()  # 改行
+            print()
 
-
-    ### 4. Insertion graph_node and graph_edge to tables
+    # ------------------------------------------------------------------
+    # 5. まとめて実行
+    # ------------------------------------------------------------------
     def insert_to_graph_info_table(self):
-        """データベースにノード情報とエッジ情報を登録する。
-        """
+        """データベースにノード情報とエッジ情報を登録する。"""
         edge_func_list = [
-            # エッジ情報
             self.statement_prev_statement_preprocess,
-            self.stock_report_statement_preprocess,
+            self.statement_report_stock_preprocess,
             self.stock_corr_stock_preprocess,
-            # ノード情報
             self.node_id_define,
-            # 特徴量情報
-            self.node_feats_define
+            self.build_category_vocabs,  # node_feats_define より前に vocab を確定させておく
+            self.node_feats_define,
         ]
-
-        # データベースにグラフ情報を登録する
         for func in edge_func_list:
             now = dt.now()
             func()
@@ -336,16 +561,17 @@ class preprocess:
 
 
 class graphDataSet(InMemoryDataset):
-    """
-    PyG の InMemoryDataset を継承したクラスで，グラフデータをメモリ上に保持する。
+    """全期間・全銘柄・全ノードタイプを含む「単一の」HeteroData を保持するデータセット。
+
+    train/val/test の分割はここでは行わない（get_loaders 側でマスクとして行う）。
     """
 
-    def __init__(self, root, transform=None, pre_transform=None, serial_id: int = 1, train_test_split_per: float = 0.6, train_val_split_per: float = 0.2):
+    def __init__(self, root, transform=None, pre_transform=None, serial_id: int = 1,
+                 vocab_dir: str = DEFAULT_VOCAB_DIR):
+        self.serial_id = serial_id
+        self.vocab_dir = vocab_dir
         super().__init__(root, transform, pre_transform)
         self.load(self.processed_paths[0])
-        self.serial_id = serial_id  # データベースの識別子を設定する。必要に応じて変更する。
-        self.train_test_split_per = train_test_split_per
-        self.train_val_split_per = train_val_split_per
 
     @property
     def raw_file_names(self) -> List[str]:
@@ -353,125 +579,148 @@ class graphDataSet(InMemoryDataset):
 
     @property
     def processed_file_names(self) -> List[str]:
-        return [
-            f"data_{self.serial_id}_train.pt",
-            f"data_{self.serial_id}_val.pt",
-            f"data_{self.serial_id}_test.pt"
-        ]
+        # 単一グラフのみを保持するため、ファイルは1つでよい
+        return [f"data_{self.serial_id}_full.pt"]
 
     @property
     def num_classes(self) -> int:
-        return 2  # 2クラス分類問題を想定している場合
-
-    @property
-    def node_types(self) -> List[str]:
-        return ["stock", "statement"]
+        return 2
 
     def download(self) -> None:
         pass
 
-    def process(self) -> None:
-        """データを処理し、HeteroData オブジェクトを作成する。
-        """
+    def _ensure_db_built(self) -> None:
+        """raw データの DB 登録（前処理）が未実行なら実行する。"""
+        db_path = cf.PATH_GRAPHINFO_DB.safe_substitute(serial_id=self.serial_id)
+        if os.path.exists(db_path):
+            return
 
-        # シリアルIDに対応するデータベースが無い => 新たに作成する
-        if not os.path.exists(cf.PATH_GRAPHINFO_DB.safe_substitute(serial_id=self.serial_id)):
-            # データベースが存在しない場合は、graph_info テーブルを作成する
-            create.graph_info(self.serial_id)
+        create.graph_info(self.serial_id)
+        pp = preprocess(
+            financials_df=fetch.financials(),
+            prices_df=fetch.prices(),
+            serial_id=self.serial_id,
+            vocab_dir=self.vocab_dir,
+        )
+        pp.insert_to_graph_info_table()
 
-            # データを前処理する
-            pp = preprocess(
-                financials_df = fetch.financials(), 
-                prices_df = fetch.prices(), 
-                serial_id = self.serial_id
+    def _build_full_graph(self) -> HeteroData:
+        """DB から全エッジ・全ノードを取得し、単一の HeteroData を構築する。"""
+        data = HeteroData()
+
+        # 1. 先にノード側を読み込み、node_id文字列 -> ローカル整数インデックス の
+        #    辞書を node_type ごとに作っておく（エッジ側の整数化に必要なため）
+        node_id_to_idx: Dict[str, Dict[str, int]] = {}
+        for node_type in ["stock", "statement"]:
+            node_table = fetch_node_table(self.serial_id, node_type)
+            data[node_type].x = torch.tensor(node_table["x"], dtype=torch.float)
+            data[node_type].cat_x = torch.tensor(node_table["cat_x"], dtype=torch.long)   # (N, カテゴリ列数)
+            data[node_type].date_x = torch.tensor(node_table["date_x"], dtype=torch.float)  # (N, 日付列数)
+            data[node_type].is_target = torch.tensor(node_table["is_target"], dtype=torch.bool)
+            data[node_type].time_id = torch.tensor(node_table["time_id"], dtype=torch.long)
+            # 文字列は tensor化できないため、そのまま numpy 配列として保持する
+            # （NeighborLoader のサブグラフ抽出後も data[node_type].node_str_id で追跡可能）
+            data[node_type].node_str_id = node_table["node_str_id"]
+
+            node_id_to_idx[node_type] = build_node_id_to_idx(node_table["node_str_id"])
+
+        # 2. エッジ側（まだ文字列 node_id のまま）を取得
+        edge_src_str, edge_dst_str = fetch_edge_index(self.serial_id)  # それぞれ (E,) の文字列配列
+        edge_type = fetch_edge_attr(self.serial_id, "edge_type")
+        edge_weight = fetch_edge_attr(self.serial_id, "edge_weight")
+        edge_time = fetch_edge_attr(self.serial_id, "observable_time_id")
+
+        edge_type_names = sorted(set(edge_type))
+        for edge_type_name in edge_type_names:
+            src_t, rel, dst_t = edge_type_name.split("__")
+            idx = np.where(edge_type == edge_type_name)[0]
+
+            # 文字列 node_id -> 整数インデックス に変換してから tensor化する
+            edge_index_int = map_edge_ids_to_idx(
+                edge_src_str[idx], edge_dst_str[idx],
+                node_id_to_idx[src_t], node_id_to_idx[dst_t],
             )
-            pp.insert_to_graph_info_table()
 
-            data_list: List[HeteroData] = []
+            data[src_t, rel, dst_t].edge_index = torch.tensor(edge_index_int, dtype=torch.long)
+            data[src_t, rel, dst_t].edge_weight = torch.tensor(edge_weight[idx], dtype=torch.float)
+            data[src_t, rel, dst_t].edge_time = torch.tensor(edge_time[idx], dtype=torch.long)
 
-            observable_time_id = fetch_edge_attr(self.serial_id, attr_name="observable_time_id")
-            edge_index = fetch_edge_index(self.serial_id)
-            edge_type = fetch_edge_attr(self.serial_id, attr_name="edge_type")
-            edge_type_names = list(set(edge_type))
+            # 逆エッジを必要とする関係なら追加する
+            key = (src_t, rel, dst_t)
+            if key in REVERSE_RELATIONS:
+                rev_rel = REVERSE_RELATIONS[key]
+                rev_edge_index = edge_index_int[[1, 0], :]  # src/dst を入れ替え
+                data[dst_t, rev_rel, src_t].edge_index = torch.tensor(rev_edge_index, dtype=torch.long)
+                data[dst_t, rev_rel, src_t].edge_weight = torch.tensor(edge_weight[idx], dtype=torch.float)
+                data[dst_t, rev_rel, src_t].edge_time = torch.tensor(edge_time[idx], dtype=torch.long)
 
-            for week_id in pp.get_unique_week_id:
-                data = HeteroData()
-                for edge_type_name in edge_type_names:
-                    idx = np.where((observable_time_id <= week_id) & (edge_type == edge_type_name))[0]
-                    src_t, rel, dst_t = edge_type_name.split("_")[:3]
-                    data[src_t, rel, dst_t].edge_index = edge_index[:, idx]
-                    data[src_t, rel, dst_t].edge_weight = fetch_edge_attr(self.serial_id, attr_name="edge_weight")[idx]
-                    data[src_t, rel, dst_t].edge_observable = fetch_edge_attr(self.serial_id, attr_name="observable_time_id")[idx]
-                data_list.append(data)
+        return data
 
-            train_separate_idx = int(self.train_test_split_per * len(data_list))
-            val_separate_idx = int((self.train_test_split_per + self.train_val_split_per) * len(data_list))
-
-            range_dict = {
-                "train": ((0, train_separate_idx), 0),
-                "val"  : ((train_separate_idx, val_separate_idx), 1),
-                "test" : ((val_separate_idx, len(data_list)), 2)
-            }
-
-            for split_name, ((start, end), id) in range_dict.items():
-                print(f"Processing {split_name} data: {start} to {end}")
-                self.save(data_list[start:end], self.processed_paths[id])
+    def process(self) -> None:
+        self._ensure_db_built()
+        data = self._build_full_graph()
+        self.save([data], self.processed_paths[0])
 
 
-def get_dataloader(batch_size: int = 32):
-    """HGTLoader を使用して、グラフデータをロードする。
+def get_loaders(
+    serial_id: int = 1,
+    split_1_per: float = 0.7,
+    split_2_per: float = 0.85,
+    batch_size: int = 32,
+    num_neighbors: Dict[Tuple[str, str, str], List[int]] | None = None,
+):
+    """train/val/test 用の NeighborLoader を1つの単一グラフから構築する。
+
+    - グラフ自体は分割しない（過去情報へのアクセスを維持するため）。
+    - is_target かつ time_id が各期間に属する stock ノードだけを
+      input_nodes（＝バッチ生成の起点かつ損失計算対象）とする。
     """
-    dataset = graphDataSet(root="scripts/datap/graph_v2/DS", serial_id=1)
+    dataset = graphDataSet(root="scripts/datap/graph_v2/DS", serial_id=serial_id)
+    data = dataset[0]
 
-    dataset_train: List[HeteroData] = torch.load(dataset.processed_paths[0])
-    dataset_val: List[HeteroData] = torch.load(dataset.processed_paths[1])
-    dataset_test: List[HeteroData] = torch.load(dataset.processed_paths[2])
+    assert isinstance(data, HeteroData)
 
-    train_loader = DataLoader(
-        dataset_train,
-        batch_size=batch_size, 
-        shuffle=True
-    )
-    val_loader = DataLoader(
-        dataset_val, 
-        batch_size=batch_size, 
-        shuffle=True
-    )
-    test_loader = DataLoader(
-        dataset_test, 
-        batch_size=batch_size, 
-        shuffle=True
-    )
+    time_id = data["stock"].time_id
+    is_target = data["stock"].is_target
+
+    t_min, t_max = time_id.min().item(), time_id.max().item()
+    split_1 = t_min + split_1_per * (t_max - t_min)
+    split_2 = t_min + split_2_per * (t_max - t_min)
+
+    train_mask = is_target & (time_id < split_1)
+    val_mask = is_target & (time_id >= split_1) & (time_id < split_2)
+    test_mask = is_target & (time_id >= split_2)
+
+    if num_neighbors is None:
+        num_neighbors = {
+            ("stock", "corr", "stock"): [10, 10],
+            ("statement", "prev", "statement"): [10, 10],
+            ("statement", "report", "stock"): [10, 10],
+            ("stock", "rev_report", "statement"): [10, 10],
+        }
+
+    def _make_loader(mask: torch.Tensor, shuffle: bool) -> NeighborLoader:
+        return NeighborLoader(
+            data,
+            num_neighbors=num_neighbors,
+            input_nodes=("stock", mask),
+            batch_size=batch_size,
+            shuffle=shuffle,
+        )
+
+    train_loader = _make_loader(train_mask, shuffle=True)
+    val_loader = _make_loader(val_mask, shuffle=False)
+    test_loader = _make_loader(test_mask, shuffle=False)
 
     return train_loader, val_loader, test_loader
 
-def get_neighbor_loader(data: HeteroData):
-    """NeighborLoader を使用して、グラフデータをロードする。
-    """
 
-    loader = NeighborLoader(
-        data,
-        num_neighbors={
-            ('stock', 'corr', 'stock'): [10, 10],
-            ('statement', 'prev', 'statement'): [10, 10],
-            ('statement', 'report', 'stock'): [10, 10]
-        },
-        input_nodes=('stock', data['stock'].node_id),
-        shuffle=True
-    )
+def mock_code(serial_id: int = 1):
+    train_loader, val_loader, test_loader = get_loaders(serial_id=serial_id, split_1_per=0.7, split_2_per=0.85, batch_size=32)
 
-    return loader
-
-
-def mock_code():
-    train_loader, val_loader, test_loader = get_dataloader(batch_size=32)
-    for data in train_loader:
-        for neighbor_data in get_neighbor_loader(data):
-            print(neighbor_data)
-        for data in val_loader:
-            for neighbor_data in get_neighbor_loader(data):
-                print(neighbor_data)
-
-    for data in test_loader:
-        for neighbor_data in get_neighbor_loader(data):
-            print(neighbor_data)
+    for batch in train_loader:
+        print(batch)
+    for batch in val_loader:
+        print(batch)
+    for batch in test_loader:
+        print(batch)
