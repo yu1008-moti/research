@@ -13,8 +13,8 @@ import torch
 from torch_geometric.data import HeteroData, InMemoryDataset
 from torch_geometric.loader import NeighborLoader
 
-from scripts.datap.graph import capm_corr
-from scripts.datap.graph.cons import rel_sql as cf
+from scripts.datap.graph import capm_corr, derivative_corr
+from scripts.datap.graph.cons import graph_params, rel_sql as cf
 from scripts.datap.graph.sql import create, fetch, insert
 
 # --------------------------------------------------------------------------
@@ -24,7 +24,18 @@ from scripts.datap.graph.sql import create, fetch, insert
 # --------------------------------------------------------------------------
 REVERSE_RELATIONS: Dict[Tuple[str, str, str], str] = {
     ("statement", "report", "stock"): "rev_report",
+    ("stock", "derivative", "option"): "rev_derivative",
+    ("stock", "derivative", "future"): "rev_derivative",
 }
+
+# --------------------------------------------------------------------------
+# Stock__derivative__Future で全対象銘柄を接続する「主要な株価指数先物」の商品区分。
+# 先物は個別株の原資産を持たない（指数・債券・通貨先物のみ）ため、
+# 市場全体のシステマティックリスクを媒介する backbone として、この区分の期近物
+# （SQRemainingDays が最小の契約）に全 is_target 銘柄を一律接続する。
+# 値の定義は scripts/datap/graph/cons.py の graph_params に集約されている。
+# --------------------------------------------------------------------------
+MARKET_INDEX_FUTURE_PRODCATS: List[str] = graph_params.MARKET_INDEX_FUTURE_PRODCATS
 
 # --------------------------------------------------------------------------
 # カテゴリ変数・日付変数の列定義
@@ -34,13 +45,15 @@ REVERSE_RELATIONS: Dict[Tuple[str, str, str], str] = {
 CATEGORICAL_COLUMNS: Dict[str, List[str]] = {
     "stock": ["S33", "S17", "Section_id", "Mkt", "Mrgn"],
     "statement": ["CurPerType"],
+    "option": ["ProdCat", "UndSSO", "CM"],
+    "future": ["ProdCat", "CM"],
 }
 
 DATE_COLUMNS: Dict[str, List[str]] = {
     "statement": ["CurFYEn"],
 }
 
-DEFAULT_VOCAB_DIR = "scripts/datap/graph_v2/DS/vocab"
+DEFAULT_VOCAB_DIR = graph_params.DEFAULT_VOCAB_DIR
 
 _SAFE_GLOBALS_REGISTERED = False
 
@@ -70,7 +83,8 @@ def _allow_numpy_globals_for_torch_load() -> None:
 
 # Time2Vec など時間エンコーディングの基準日。
 # この日からの経過日数(float)を生の時間スカラーとしてモデルに渡す。
-TIME_ENCODING_EPOCH = pd.Timestamp("2000-01-01")
+# 値の定義は scripts/datap/graph/cons.py の graph_params に集約されている。
+TIME_ENCODING_EPOCH = pd.Timestamp(graph_params.TIME_ENCODING_EPOCH)
 
 
 def date_to_days_since_epoch(date_series: pd.Series) -> np.ndarray:
@@ -271,14 +285,20 @@ def map_edge_ids_to_idx(
 class preprocess:
     """データを前処理し、graph_node および graph_edge テーブルに格納する。"""
 
-    def __init__(self, financials_df: pd.DataFrame, prices_df: pd.DataFrame, serial_id: int = 1,
+    def __init__(self, financials_df: pd.DataFrame, prices_df: pd.DataFrame,
+                 options_df: pd.DataFrame, futures_df: pd.DataFrame, serial_id: int = 1,
                  vocab_dir: str = DEFAULT_VOCAB_DIR):
         self.financials_df = financials_df
         self.prices_df = prices_df
+        self.options_df = options_df
+        self.futures_df = futures_df
         self.serial_id = serial_id
         self.vocab_dir = vocab_dir
         self.unique_week_id = sorted(
-            set(financials_df["week_id"].unique()).union(set(prices_df["week_id"].unique()))
+            set(financials_df["week_id"].unique())
+            .union(set(prices_df["week_id"].unique()))
+            .union(set(options_df["week_id"].unique()))
+            .union(set(futures_df["week_id"].unique()))
         )
 
     @property
@@ -374,6 +394,210 @@ class preprocess:
                 "observable_time_id": [int(w) for w in dst_week],
             }), self.serial_id)
 
+    def _insert_peer_corr_edges(self, peer_corr: derivative_corr.PeerCorrEdges, node_type: str) -> None:
+        """derivative_corr.build_peer_corr_edges() の結果を graph_edge テーブルに書き込む共通処理。"""
+        edge_type = f"{node_type}__corr__{node_type}"
+
+        for week_id, week_edges in sorted(peer_corr.edges.items()):
+            if not week_edges:
+                continue
+
+            src_codes = [e[0] for e in week_edges]
+            dst_codes = [e[1] for e in week_edges]
+            weights = [e[2] for e in week_edges]
+
+            week_id_str = str(week_id)
+            src_node_id = [f"{node_type}_{week_id_str}_{c}" for c in src_codes]
+            dst_node_id = [f"{node_type}_{week_id_str}_{c}" for c in dst_codes]
+            edge_id = [f"{edge_type}_{week_id_str}_{s}_{d}" for s, d in zip(src_codes, dst_codes)]
+
+            insert.edge(pd.DataFrame({
+                "edge_id": edge_id,
+                "edge_type": [edge_type] * len(src_codes),
+                "src_node_id": src_node_id,
+                "dst_node_id": dst_node_id,
+                "edge_weight_list": weights,
+                "observable_time_id": [week_id] * len(src_codes),
+            }), self.serial_id)
+
+    def option_corr_option_preprocess(self):
+        """同一原資産(UndSSO)を持つオプション契約同士の相関エッジを作成する。
+
+        原資産が無い（＝UndSSOがNULL）指数・債券オプションはグループ化できないため対象外。
+        """
+        options_df = self.options_df.copy()
+        options_df["week_id"] = options_df["week_id"].astype(int)
+
+        peer_corr = derivative_corr.build_peer_corr_edges(
+            options_df, group_col="UndSSO", code_col="Code", close_col="AdjC",
+        )
+        self._insert_peer_corr_edges(peer_corr, node_type="option")
+
+    def future_corr_future_preprocess(self):
+        """同一商品区分(ProdCat)を持つ先物契約同士の相関エッジを作成する。"""
+        futures_df = self.futures_df.copy()
+        futures_df["week_id"] = futures_df["week_id"].astype(int)
+
+        peer_corr = derivative_corr.build_peer_corr_edges(
+            futures_df, group_col="ProdCat", code_col="Code", close_col="AdjC",
+        )
+        self._insert_peer_corr_edges(peer_corr, node_type="future")
+
+    def _prev_chain_preprocess(self, df: pd.DataFrame, node_type: str) -> None:
+        """同一契約(Code)の時系列エッジ（前週 -> 今週）を作成する共通処理。
+
+        statement_prev_statement_preprocess と同じ意味合い（同一契約の週を跨いだ
+        連結）だが、オプションは（限られた週範囲でも）数万契約に達するため、
+        statement/stock 側のようなコード単位の Python ループ + 逐次 insert では
+        実用的な時間で終わらない（実測: 20週分・約3万契約で約30分）。
+        そのため groupby + shift による一括ベクトル化と、1回のバルク insert で処理する。
+        """
+        df = df[["week_id", "Code"]].copy()
+        df["week_id"] = df["week_id"].astype(int)
+        df = df.sort_values(["Code", "week_id"])
+        edge_type = f"{node_type}__prev__{node_type}"
+
+        df["_prev_week_id"] = df.groupby("Code")["week_id"].shift(1)
+        chained = df.dropna(subset=["_prev_week_id"])
+        print(f"[{node_type}_prev_{node_type}] {len(chained)}件の prev エッジを作成します")
+
+        if chained.empty:
+            return
+
+        src_week = chained["_prev_week_id"].astype(int).astype(str).to_numpy()
+        dst_week = chained["week_id"].astype(str).to_numpy()
+        codes = chained["Code"].to_numpy()
+
+        src_node_id = [f"{node_type}_{w}_{c}" for w, c in zip(src_week, codes)]
+        dst_node_id = [f"{node_type}_{w}_{c}" for w, c in zip(dst_week, codes)]
+        edge_id = [f"{edge_type}_{w}_{c}_{c}" for w, c in zip(dst_week, codes)]
+
+        insert.edge(pd.DataFrame({
+            "edge_id": edge_id,
+            "edge_type": [edge_type] * len(src_node_id),
+            "src_node_id": src_node_id,
+            "dst_node_id": dst_node_id,
+            "edge_weight_list": [1.0] * len(src_node_id),
+            "observable_time_id": [int(w) for w in dst_week],
+        }), self.serial_id)
+
+    def option_prev_option_preprocess(self):
+        """同一オプション契約の時系列エッジ（前週 -> 今週）を作成する。"""
+        self._prev_chain_preprocess(self.options_df, node_type="option")
+
+    def future_prev_future_preprocess(self):
+        """同一先物契約の時系列エッジ（前週 -> 今週）を作成する。"""
+        self._prev_chain_preprocess(self.futures_df, node_type="future")
+
+    def stock_derivative_option_preprocess(self):
+        """銘柄ノード -> その原資産とするオプション契約ノード への派生エッジを作成する。
+
+        ★ データ不整合対応
+        UndSSO が NULL（指数・債券オプション）の行は原資産の個別株が存在しないため対象外。
+        また report エッジと同様、株価データが実在する (week, code) にのみエッジを張る。
+        """
+        options_df = self.options_df.copy()
+        options_df["week_id"] = options_df["week_id"].astype(int)
+        options_df = options_df.dropna(subset=["UndSSO"])
+
+        prices_df = self.prices_df.copy()
+        prices_df["week_id"] = prices_df["week_id"].astype(int)
+        valid_pairs = prices_df[["week_id", "Code"]].drop_duplicates()
+
+        merged = options_df.merge(
+            valid_pairs, left_on=["week_id", "UndSSO"], right_on=["week_id", "Code"],
+            how="inner", suffixes=("", "_stock"),
+        )
+
+        n_dropped = len(options_df) - len(merged)
+        print(
+            f"[stock_derivative_option] 対応する株価データが無いため "
+            f"{n_dropped}件の derivative エッジをスキップ"
+        )
+
+        if merged.empty:
+            return
+
+        week = merged["week_id"].values.astype(str)
+        stock_code = merged["UndSSO"].values
+        option_code = merged["Code"].values
+
+        src_node_id = [f"stock_{w}_{c}" for w, c in zip(week, stock_code)]
+        dst_node_id = [f"option_{w}_{c}" for w, c in zip(week, option_code)]
+        edge_id = [
+            f"stock__derivative__option_{w}_{sc}_{oc}"
+            for w, sc, oc in zip(week, stock_code, option_code)
+        ]
+
+        insert.edge(pd.DataFrame({
+            "edge_id": edge_id,
+            "edge_type": ["stock__derivative__option"] * len(src_node_id),
+            "src_node_id": src_node_id,
+            "dst_node_id": dst_node_id,
+            "edge_weight_list": [1.0] * len(src_node_id),
+            "observable_time_id": [int(w) for w in week],
+        }), self.serial_id)
+
+    def stock_derivative_future_preprocess(self):
+        """全 is_target 銘柄ノード -> 主要な株価指数先物（期近物）ノード への派生エッジを作成する。
+
+        先物は個別株の原資産を持たない（指数・債券・通貨先物のみ）ため、
+        MARKET_INDEX_FUTURE_PRODCATS で指定した株価指数先物の期近物（SQRemainingDaysが
+        最小の契約）に、その週の全対象銘柄を一律接続する "market backbone" 構造とする。
+        """
+        futures_df = self.futures_df.copy()
+        futures_df["week_id"] = futures_df["week_id"].astype(int)
+
+        candidates = futures_df[futures_df["ProdCat"].isin(MARKET_INDEX_FUTURE_PRODCATS)].copy()
+        if candidates.empty:
+            print(
+                "[stock_derivative_future] MARKET_INDEX_FUTURE_PRODCATS に該当する"
+                "先物データがありません"
+            )
+            return
+
+        # 期近物（SQRemainingDaysが非負で最小）を週・商品区分ごとに選ぶ。
+        # 全て負（＝期限切れ扱い）の場合はそのうち最大値（最も期限切れが浅いもの）を採用する。
+        candidates["_is_not_expired"] = candidates["SQRemainingDays"] >= 0
+        candidates = candidates.sort_values(
+            ["week_id", "ProdCat", "_is_not_expired", "SQRemainingDays"],
+            ascending=[True, True, False, True],
+        )
+        front_month = candidates.groupby(["week_id", "ProdCat"], as_index=False).first()
+
+        prices_df = self.prices_df.copy()
+        prices_df["week_id"] = prices_df["week_id"].astype(int)
+        target_stocks = prices_df[
+            (prices_df["Mkt"] == "0000") | (prices_df["Mkt"] == "0500")
+        ][["week_id", "Code"]].drop_duplicates()
+
+        merged = target_stocks.merge(
+            front_month[["week_id", "Code", "ProdCat"]], on="week_id", suffixes=("", "_future"),
+        )
+
+        if merged.empty:
+            return
+
+        week = merged["week_id"].values.astype(str)
+        stock_code = merged["Code"].values
+        future_code = merged["Code_future"].values
+
+        src_node_id = [f"stock_{w}_{c}" for w, c in zip(week, stock_code)]
+        dst_node_id = [f"future_{w}_{c}" for w, c in zip(week, future_code)]
+        edge_id = [
+            f"stock__derivative__future_{w}_{sc}_{fc}"
+            for w, sc, fc in zip(week, stock_code, future_code)
+        ]
+
+        insert.edge(pd.DataFrame({
+            "edge_id": edge_id,
+            "edge_type": ["stock__derivative__future"] * len(src_node_id),
+            "src_node_id": src_node_id,
+            "dst_node_id": dst_node_id,
+            "edge_weight_list": [1.0] * len(src_node_id),
+            "observable_time_id": [int(w) for w in week],
+        }), self.serial_id)
+
     def statement_prev_statement_preprocess(self):
         """決算ノードの時系列エッジ（前期 -> 今期）を作成する。"""
         financials_df = self.financials_df.copy()
@@ -461,8 +685,13 @@ class preprocess:
     # 2. graph_node に関する処理
     # ------------------------------------------------------------------
     def node_id_define(self):
-        """銘柄ノードと決算情報ノードの node_id / is_target / time_id を定義する。"""
-        using_df_list = [(self.financials_df.copy(), "statement"), (self.prices_df.copy(), "stock")]
+        """銘柄・決算・オプション・先物ノードの node_id / is_target / time_id を定義する。"""
+        using_df_list = [
+            (self.financials_df.copy(), "statement"),
+            (self.prices_df.copy(), "stock"),
+            (self.options_df.copy(), "option"),
+            (self.futures_df.copy(), "future"),
+        ]
 
         for i, (df, node_type) in enumerate(using_df_list, start=1):
             print(f"Processing node_type: {node_type} ({i}/{len(using_df_list)})")
@@ -495,7 +724,12 @@ class preprocess:
         カテゴリの世界観を定義しているだけなので、リークとは区別される。
         （新しい業種が将来追加される可能性に備えて <UNK> 枠を用意している）
         """
-        using_df_list = [(self.financials_df, "statement"), (self.prices_df, "stock")]
+        using_df_list = [
+            (self.financials_df, "statement"),
+            (self.prices_df, "stock"),
+            (self.options_df, "option"),
+            (self.futures_df, "future"),
+        ]
         for df, node_type in using_df_list:
             for col in CATEGORICAL_COLUMNS.get(node_type, []):
                 vocab = build_category_vocab(df[col].values)
@@ -514,7 +748,12 @@ class preprocess:
         - cat : モデル側で列ごとに nn.Embedding する（get_vocab_sizes()でサイズ取得）
         - date: モデル側で Time2Vec 等の時間エンコーディングに渡す
         """
-        using_df_list = [(self.financials_df.copy(), "statement"), (self.prices_df.copy(), "stock")]
+        using_df_list = [
+            (self.financials_df.copy(), "statement"),
+            (self.prices_df.copy(), "stock"),
+            (self.options_df.copy(), "option"),
+            (self.futures_df.copy(), "future"),
+        ]
 
         for i, (df, node_type) in enumerate(using_df_list, start=1):
             if "week_id" not in df.columns or "Code" not in df.columns:
@@ -576,6 +815,12 @@ class preprocess:
             self.statement_prev_statement_preprocess,
             self.statement_report_stock_preprocess,
             self.stock_corr_stock_preprocess,
+            self.option_corr_option_preprocess,
+            self.option_prev_option_preprocess,
+            self.future_corr_future_preprocess,
+            self.future_prev_future_preprocess,
+            self.stock_derivative_option_preprocess,
+            self.stock_derivative_future_preprocess,
             self.node_id_define,
             self.build_category_vocabs,  # node_feats_define より前に vocab を確定させておく
             self.node_feats_define,
@@ -626,6 +871,8 @@ class graphDataSet(InMemoryDataset):
         pp = preprocess(
             financials_df=fetch.financials(),
             prices_df=fetch.prices(),
+            options_df=fetch.options(),
+            futures_df=fetch.futures(),
             serial_id=self.serial_id,
             vocab_dir=self.vocab_dir,
         )
@@ -657,7 +904,7 @@ class graphDataSet(InMemoryDataset):
         # 1. 先にノード側を読み込み、node_id文字列 -> ローカル整数インデックス の
         #    辞書を node_type ごとに作っておく（エッジ側の整数化に必要なため）
         node_id_to_idx: Dict[str, Dict[str, int]] = {}
-        for node_type in ["stock", "statement"]:
+        for node_type in ["stock", "statement", "option", "future"]:
             node_table = fetch_node_table(self.serial_id, node_type)
             data[node_type].x = torch.tensor(node_table["x"], dtype=torch.float)
             data[node_type].cat_x = torch.tensor(node_table["cat_x"], dtype=torch.long)   # (N, カテゴリ列数)
@@ -710,9 +957,9 @@ class graphDataSet(InMemoryDataset):
 
 def get_loaders(
     serial_id: int = 1,
-    split_1_per: float = 0.7,
-    split_2_per: float = 0.85,
-    batch_size: int = 32,
+    split_1_per: float = graph_params.SPLIT_1_PER,
+    split_2_per: float = graph_params.SPLIT_2_PER,
+    batch_size: int = graph_params.BATCH_SIZE,
     num_neighbors: Dict[Tuple[str, str, str], List[int]] | None = None,
 ):
     """train/val/test 用の NeighborLoader を1つの単一グラフから構築する。
@@ -721,7 +968,7 @@ def get_loaders(
     - is_target かつ time_id が各期間に属する stock ノードだけを
       input_nodes（＝バッチ生成の起点かつ損失計算対象）とする。
     """
-    dataset = graphDataSet(root="scripts/datap/graph_v2/DS", serial_id=serial_id)
+    dataset = graphDataSet(root="scripts/datap/graph/DS", serial_id=serial_id)
     data = dataset[0]
 
     assert isinstance(data, HeteroData)
@@ -738,12 +985,13 @@ def get_loaders(
     test_mask = is_target & (time_id >= split_2)
 
     if num_neighbors is None:
-        num_neighbors = {
-            ("stock", "corr", "stock"): [10, 10],
-            ("statement", "prev", "statement"): [10, 10],
-            ("statement", "report", "stock"): [10, 10],
-            ("stock", "rev_report", "statement"): [10, 10],
-        }
+        # 明示指定が無ければ、グラフに実在する全エッジ種別に対して
+        # graph_params.NUM_NEIGHBORS_PER_HOP を graph_params.NUM_HOPS ホップ分
+        # 一律に適用する。エッジ種別ごとに差を付けたい場合は、この関数の
+        # num_neighbors 引数に辞書を渡して上書きすればよい
+        # （例: hub化しやすい ("future","rev_derivative","stock") だけ小さくする等）。
+        per_hop = [graph_params.NUM_NEIGHBORS_PER_HOP] * graph_params.NUM_HOPS
+        num_neighbors = {edge_type: per_hop for edge_type in data.edge_types}
 
     def _make_loader(mask: torch.Tensor, shuffle: bool) -> NeighborLoader:
         return NeighborLoader(

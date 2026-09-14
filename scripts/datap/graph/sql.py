@@ -1,7 +1,7 @@
 import pandas as pd
 from string import Template
 import duckdb as db
-from scripts.datap.graph_v2.cons import rel_sql as cf
+from scripts.datap.graph.cons import rel_sql as cf
 
 
 class fetch:
@@ -33,6 +33,26 @@ class fetch:
                 END_WEEK_ID=cf.END_WEEK_ID
             )
         return fetch._any(FINANCIAL_STATEMENTS_FETCH_QUERY, cf.PATH_ORIGINAL_DB)
+
+    # SQL QUERY TO FETCH OPTIONS DATA
+    @staticmethod
+    def options() -> pd.DataFrame:
+        with open(cf.PATH_SQL_TO_FETCH_OPTIONS, "r", encoding="utf-8") as f:
+            OPTIONS_FETCH_QUERY = Template(f.read()).safe_substitute(
+                START_WEEK_ID=cf.START_WEEK_ID,
+                END_WEEK_ID=cf.END_WEEK_ID
+            )
+        return fetch._any(OPTIONS_FETCH_QUERY, cf.PATH_ORIGINAL_DB)
+
+    # SQL QUERY TO FETCH FUTURES DATA
+    @staticmethod
+    def futures() -> pd.DataFrame:
+        with open(cf.PATH_SQL_TO_FETCH_FUTURES, "r", encoding="utf-8") as f:
+            FUTURES_FETCH_QUERY = Template(f.read()).safe_substitute(
+                START_WEEK_ID=cf.START_WEEK_ID,
+                END_WEEK_ID=cf.END_WEEK_ID
+            )
+        return fetch._any(FUTURES_FETCH_QUERY, cf.PATH_ORIGINAL_DB)
 
 
     # TO DATASET [edge]

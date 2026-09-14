@@ -1,2 +1,2 @@
-import scripts.datap.graph_v2.data_pipeline as dt_pipe
+import scripts.datap.graph.data_pipeline as dt_pipe
 

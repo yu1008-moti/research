@@ -30,21 +30,11 @@ import statsmodels.api as sm
 import torch
 from statsmodels.regression.rolling import RollingOLS
 
+from scripts.datap.graph.cons import graph_params
 
-class capm_corr_constants:
-    """CAPM 残差相関エッジ構築のハイパーパラメータ (graph_v1/cons.py train_constants 相当)。"""
-
-    # CAPM 残差行列のキャッシュ先
-    RESIDUAL_STORED_PATH = "./scripts/datap/graph_v2/store/returns_residual_matrix.parquet"
-    # CAPM をローリング推定する窓 (週)
-    WINDOW_SIZE_FOR_CAPM = 52
-    # 残差リターンのローリング相関を取る窓 (週)
-    WINDOW_SIZE_FOR_CORR = 52
-    # |corr| > THRESHOLD の銘柄ペアのみエッジ化
-    THRESHOLD = 0.7
-    # この週 ID 以降のみエッジを返す
-    FIRST_WEEK_ID = 201501
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# ハイパーパラメータは全て scripts/datap/graph/cons.py の graph_params
+# （CAPM_* 系）に集約されている。ここではそのデフォルト値を関数シグネチャの
+# デフォルト引数として使うだけで、値そのものの定義は持たない。
 
 
 class _color:
@@ -132,8 +122,8 @@ def _rolling_capm_residual(
 def residual_matrix_from_prices(
     prices_df: pd.DataFrame,
     *,
-    window_size_for_capm: int = capm_corr_constants.WINDOW_SIZE_FOR_CAPM,
-    residual_stored_path: str = capm_corr_constants.RESIDUAL_STORED_PATH,
+    window_size_for_capm: int = graph_params.CAPM_WINDOW_SIZE_FOR_CAPM,
+    residual_stored_path: str = graph_params.CAPM_RESIDUAL_STORED_PATH,
     use_cache: bool = True,
 ) -> pd.DataFrame:
     """全銘柄の CAPM 残差リターンを計算し ``week_id x Code`` 行列にピボットする。
@@ -264,11 +254,11 @@ def iter_firm_corr_edges(
     *,
     prices_df: Optional[pd.DataFrame] = None,
     residual_matrix: Optional[pd.DataFrame] = None,
-    window_size_for_capm: int = capm_corr_constants.WINDOW_SIZE_FOR_CAPM,
-    window_size_for_corr: int = capm_corr_constants.WINDOW_SIZE_FOR_CORR,
-    threshold: float = capm_corr_constants.THRESHOLD,
-    first_week_id: int = capm_corr_constants.FIRST_WEEK_ID,
-    residual_stored_path: str = capm_corr_constants.RESIDUAL_STORED_PATH,
+    window_size_for_capm: int = graph_params.CAPM_WINDOW_SIZE_FOR_CAPM,
+    window_size_for_corr: int = graph_params.CAPM_WINDOW_SIZE_FOR_CORR,
+    threshold: float = graph_params.CAPM_THRESHOLD,
+    first_week_id: int = graph_params.CAPM_FIRST_WEEK_ID,
+    residual_stored_path: str = graph_params.CAPM_RESIDUAL_STORED_PATH,
     use_cache: bool = True,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -294,7 +284,8 @@ def iter_firm_corr_edges(
 
     # 残差計算で全 NaN の銘柄が落ちるため、並びは計算後に確定する
     firm_id_order = residual_matrix.columns
-    device = device or capm_corr_constants.DEVICE
+    # device 未指定時: graph_params.CAPM_DEVICE (Noneならcuda自動判定) の順に採用
+    device = device or graph_params.CAPM_DEVICE or ("cuda" if torch.cuda.is_available() else "cpu")
 
     for ratio, week_id, sparse_corr in _iter_rolling_corr_sparse(
         residual_matrix, window_size_for_corr, threshold, device
@@ -319,11 +310,11 @@ def build_firm_corr_edges(
     prices_df: Optional[pd.DataFrame] = None,
     *,
     residual_matrix: Optional[pd.DataFrame] = None,
-    window_size_for_capm: int = capm_corr_constants.WINDOW_SIZE_FOR_CAPM,
-    window_size_for_corr: int = capm_corr_constants.WINDOW_SIZE_FOR_CORR,
-    threshold: float = capm_corr_constants.THRESHOLD,
-    first_week_id: int = capm_corr_constants.FIRST_WEEK_ID,
-    residual_stored_path: str = capm_corr_constants.RESIDUAL_STORED_PATH,
+    window_size_for_capm: int = graph_params.CAPM_WINDOW_SIZE_FOR_CAPM,
+    window_size_for_corr: int = graph_params.CAPM_WINDOW_SIZE_FOR_CORR,
+    threshold: float = graph_params.CAPM_THRESHOLD,
+    first_week_id: int = graph_params.CAPM_FIRST_WEEK_ID,
+    residual_stored_path: str = graph_params.CAPM_RESIDUAL_STORED_PATH,
     use_cache: bool = True,
     device: Optional[str] = None,
     verbose: bool = True,
