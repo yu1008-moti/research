@@ -55,6 +55,7 @@ dependencies = [
     "psutil==7.2.2",
     "pure-eval==0.2.3",
     "pyarrow==24.0.0",
+    "pyg-lib>=0.9.0",
     "pyparsing==3.3.2",
     "pytest>=9.0.3",
     "python-dateutil==2.9.0.post0",
@@ -86,6 +87,11 @@ dependencies = [
 name = "pytorch-2.13.0-cu132"
 url  = "https://download.pytorch.org/whl/cu132"
 explicit = true
+
+[[tool.uv.index]]
+name = "pyg"
+url = "https://data.pyg.org/whl/torch-2.13.0+cu132.html"
+format = "flat"
 
 [tool.uv.sources]
 torch = [

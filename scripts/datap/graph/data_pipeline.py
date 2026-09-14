@@ -19,8 +19,10 @@ data_pipeline_v2.py
 
 4. [設計不備の修正] ノード特徴量 (x)、is_target マスク、ノードの真の識別子
    (node_id 文字列) が HeteroData に一切格納されていなかった問題を解消。
-   → fetch_node_table() で取得し、data[node_type].x / is_target / node_str_id
-     として明示的に格納する。
+   → fetch_node_table() で取得し、data[node_type].x / is_target を格納。
+     node_str_id（文字列）は HeteroData には入れず .npy として別保存する
+     （NeighborLoader が全ノード属性を自動テンソル化しようとするため、
+     文字列配列を直接持たせると TypeError になるため）。
 
    ★★★ 要確認 ★★★
    fetch_node_table() は「エッジ側で使われている整数インデックスの順序」と
@@ -44,6 +46,7 @@ import json
 import os
 from datetime import datetime as dt
 from typing import Dict, List, Tuple, TypedDict, cast
+import importlib
 
 import duckdb as db
 import numpy as np
@@ -52,9 +55,9 @@ import torch
 from torch_geometric.data import HeteroData, InMemoryDataset
 from torch_geometric.loader import NeighborLoader
 
-from scripts.datap.graph_v2 import capm_corr
-from scripts.datap.graph_v2.cons import rel_sql as cf
-from scripts.datap.graph_v2.sql import create, fetch, insert
+from scripts.datap.graph import capm_corr
+from scripts.datap.graph.cons import rel_sql as cf
+from scripts.datap.graph.sql import create, fetch, insert
 
 # --------------------------------------------------------------------------
 # 逆エッジを自動生成したい関係。
@@ -80,6 +83,32 @@ DATE_COLUMNS: Dict[str, List[str]] = {
 }
 
 DEFAULT_VOCAB_DIR = "scripts/datap/graph_v2/DS/vocab"
+
+_SAFE_GLOBALS_REGISTERED = False
+
+
+def _allow_numpy_globals_for_torch_load() -> None:
+    """torch.load(weights_only=True) が HeteroData 内の numpy 配列
+    (node_str_id など文字列配列) を復元できるよう、安全なグローバル関数として
+    許可リストに登録する。
+
+    ★ ここで許可しているのは「自分自身の前処理が書き出した.ptファイルの復元に
+    必要な、numpyの内部関数」のみ。他者から受け取った信頼できないファイルの
+    読み込みにこの安全性を流用しないこと。
+    """
+    global _SAFE_GLOBALS_REGISTERED
+    if _SAFE_GLOBALS_REGISTERED:
+        return
+
+    # np.core.multiarray / np._core.multiarray への直接の属性アクセスは
+    # numpyの型スタブが公開していないため Pylance が誤検知する。
+    # importlib + getattr(文字列) による動的アクセスに統一して回避する。
+    module_name = "numpy._core.multiarray" if hasattr(np, "_core") else "numpy.core.multiarray"
+    multiarray_module = importlib.import_module(module_name)
+    reconstruct = getattr(multiarray_module, "_reconstruct")
+
+    torch.serialization.add_safe_globals([reconstruct, np.ndarray, np.dtype])
+    _SAFE_GLOBALS_REGISTERED = True
 
 # Time2Vec など時間エンコーディングの基準日。
 # この日からの経過日数(float)を生の時間スカラーとしてモデルに渡す。
@@ -142,7 +171,7 @@ def get_vocab_sizes(serial_id: int, node_type: str, vocab_dir: str = DEFAULT_VOC
     return sizes
 
 
-def fetch_edge_index(serial_id: int) -> Tuple[np.ndarray, np.ndarray]:
+def fetch_edge_index(serial_id: int) -> Tuple[pd.arrays.ArrowStringArray, pd.arrays.ArrowStringArray]:
     """エッジ情報をデータベースから取得する。
 
     戻り値は (src_node_id, dst_node_id) の2つの (E,) 文字列配列。
@@ -154,13 +183,13 @@ def fetch_edge_index(serial_id: int) -> Tuple[np.ndarray, np.ndarray]:
     整数化すること。
     """
     df = fetch.edge_index(serial_id)  # 列: src_node_id, dst_node_id を想定
-    ret_src = df["src_node_id"].values.astype(str)
-    ret_dst = df["dst_node_id"].values.astype(str)
+    src = df["src_node_id"].values.astype(str)
+    dst = df["dst_node_id"].values.astype(str)
 
-    assert isinstance(ret_src, np.ndarray)
-    assert isinstance(ret_dst, np.ndarray)
+    assert isinstance(src, pd.arrays.ArrowStringArray)
+    assert isinstance(dst, pd.arrays.ArrowStringArray)
 
-    return ret_src, ret_dst
+    return src, dst
 
 
 def fetch_edge_attr(serial_id: int, attr_name: str) -> np.ndarray:
@@ -258,8 +287,8 @@ def build_node_id_to_idx(node_str_id: np.ndarray) -> Dict[str, int]:
 
 
 def map_edge_ids_to_idx(
-    src_ids: np.ndarray,
-    dst_ids: np.ndarray,
+    src_ids: pd.arrays.ArrowStringArray,
+    dst_ids: pd.arrays.ArrowStringArray,
     src_map: Dict[str, int],
     dst_map: Dict[str, int],
 ) -> np.ndarray:
@@ -302,31 +331,70 @@ class preprocess:
     # 1. graph_edge に関する処理
     # ------------------------------------------------------------------
     def stock_corr_stock_preprocess(self):
-        """銘柄間 CAPM 残差相関エッジを計算し、graph_edge テーブルに格納する。"""
+        """銘柄間 CAPM 残差相関エッジを計算し、graph_edge テーブルに格納する。
+
+        ★ データ不整合対応
+        capm_corr.build_firm_corr_edges() は固定の銘柄ユニバース(firm_id_order)
+        を前提に相関を計算しており、ある銘柄がまだ上場していない週についても
+        エッジを生成してしまうことがある（例: 2024年新規上場の '130A0' が
+        2015年時点のエッジに登場する、等）。node_id_define() は実際に価格データが
+        存在する (week, code) からしか stock ノードを作らないため、
+        そのままだと存在しないノードを指すダングリングエッジになる。
+        したがって、report エッジと同様に「実在する (week, code) にのみ
+        エッジを張る」フィルタをここでも適用する。
+        """
         prices_df = self.prices_df.copy()
+        prices_df["week_id"] = prices_df["week_id"].astype(int)
+        valid_pairs = set(zip(prices_df["week_id"], prices_df["Code"]))
+
         src, dst = 0, 1
 
         firm_corr = capm_corr.build_firm_corr_edges(prices_df)
         firm_id_order = firm_corr.firm_id_order
 
+        n_dropped = 0
+        n_kept = 0
         for week_id, (edge_index, edge_weight) in sorted(firm_corr.edges.items()):
-            week_id = str(int(week_id))
+            week_id_int = int(week_id)
 
             src_tk = [firm_id_order[i - 1] for i in edge_index[src].cpu().numpy()]
             dst_tk = [firm_id_order[i - 1] for i in edge_index[dst].cpu().numpy()]
-            src_node_id = [f"stock_{week_id}_{code}" for code in src_tk]
-            dst_node_id = [f"stock_{week_id}_{code}" for code in dst_tk]
-            edge_id = [f"stock__corr__stock_{week_id}_{s}_{d}" for s, d in zip(src_tk, dst_tk)]
+            weight_list = edge_weight.cpu().numpy().tolist()
+
+            # 実在する (week, code) の組み合わせにのみ絞り込む
+            keep_mask = [
+                (week_id_int, s) in valid_pairs and (week_id_int, d) in valid_pairs
+                for s, d in zip(src_tk, dst_tk)
+            ]
+            n_dropped += len(keep_mask) - sum(keep_mask)
+            n_kept += sum(keep_mask)
+
+            src_tk_f = [s for s, keep in zip(src_tk, keep_mask) if keep]
+            dst_tk_f = [d for d, keep in zip(dst_tk, keep_mask) if keep]
+            weight_f = [w for w, keep in zip(weight_list, keep_mask) if keep]
+
+            if not src_tk_f:
+                continue
+
+            week_id_str = str(week_id_int)
+            src_node_id = [f"stock_{week_id_str}_{code}" for code in src_tk_f]
+            dst_node_id = [f"stock_{week_id_str}_{code}" for code in dst_tk_f]
+            edge_id = [f"stock__corr__stock_{week_id_str}_{s}_{d}" for s, d in zip(src_tk_f, dst_tk_f)]
 
             insert.edge(pd.DataFrame({
                 "edge_id": edge_id,
                 # "__" 区切りで (src_type, relation, dst_type) を一意にパースできるようにする
-                "edge_type": ["stock__corr__stock"] * len(src_tk),
+                "edge_type": ["stock__corr__stock"] * len(src_tk_f),
                 "src_node_id": src_node_id,
                 "dst_node_id": dst_node_id,
-                "edge_weight_list": edge_weight.cpu().numpy().tolist(),
-                "observable_time_id": [int(week_id)] * len(src_tk),
+                "edge_weight_list": weight_f,
+                "observable_time_id": [week_id_int] * len(src_tk_f),
             }), self.serial_id)
+
+        print(
+            f"[stock_corr_stock] 対応する株価ノードが無いため "
+            f"{n_dropped}件の相関エッジをスキップ（採用: {n_kept}件）"
+        )
 
         # 同一銘柄の 1-step 前 -> 現時点 のエッジ（相関と同じ node type なので同じ relation にまとめる）
         for code in prices_df["Code"].unique():
@@ -570,6 +638,7 @@ class graphDataSet(InMemoryDataset):
                  vocab_dir: str = DEFAULT_VOCAB_DIR):
         self.serial_id = serial_id
         self.vocab_dir = vocab_dir
+        _allow_numpy_globals_for_torch_load()  # weights_only=True での復元を可能にする
         super().__init__(root, transform, pre_transform)
         self.load(self.processed_paths[0])
 
@@ -604,6 +673,25 @@ class graphDataSet(InMemoryDataset):
         )
         pp.insert_to_graph_info_table()
 
+    def _node_str_id_path(self, node_type: str) -> str:
+        """node_str_id を保存する .npy ファイルのパス。
+
+        HeteroData の中には入れず、別ファイルとして保存する
+        （NeighborLoader が全ノード属性を自動でテンソル化しようとするため、
+        文字列配列を data[node_type] に直接持たせると
+        TypeError: can't convert np.ndarray of type numpy.str_ になる）。
+        """
+        return os.path.join(self.processed_dir, f"node_str_id_{self.serial_id}_{node_type}.npy")
+
+    def load_node_str_id(self, node_type: str) -> np.ndarray:
+        """指定 node_type の node_str_id 配列をロードする。
+
+        使い方（学習ループ内でバッチの正体を特定したい場合）:
+            global_idx = batch['stock'].n_id.numpy()  # NeighborLoaderが自動付与
+            str_ids = dataset.load_node_str_id('stock')[global_idx]
+        """
+        return np.load(self._node_str_id_path(node_type), allow_pickle=False)
+
     def _build_full_graph(self) -> HeteroData:
         """DB から全エッジ・全ノードを取得し、単一の HeteroData を構築する。"""
         data = HeteroData()
@@ -618,9 +706,9 @@ class graphDataSet(InMemoryDataset):
             data[node_type].date_x = torch.tensor(node_table["date_x"], dtype=torch.float)  # (N, 日付列数)
             data[node_type].is_target = torch.tensor(node_table["is_target"], dtype=torch.bool)
             data[node_type].time_id = torch.tensor(node_table["time_id"], dtype=torch.long)
-            # 文字列は tensor化できないため、そのまま numpy 配列として保持する
-            # （NeighborLoader のサブグラフ抽出後も data[node_type].node_str_id で追跡可能）
-            data[node_type].node_str_id = node_table["node_str_id"]
+            # 文字列IDは HeteroData に入れず .npy として別保存する（理由は _node_str_id_path 参照）
+            os.makedirs(self.processed_dir, exist_ok=True)
+            np.save(self._node_str_id_path(node_type), node_table["node_str_id"])
 
             node_id_to_idx[node_type] = build_node_id_to_idx(node_table["node_str_id"])
 

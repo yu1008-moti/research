@@ -2033,6 +2033,16 @@ wheels = [
 ]
 
 [[package]]
+name = "pyg-lib"
+version = "0.9.0+pt213cu132"
+source = { registry = "https://data.pyg.org/whl/torch-2.13.0+cu132.html" }
+wheels = [
+    { url = "https://data.pyg.org/whl/torch-2.13.0%2Bcu132/pyg_lib-0.9.0%2Bpt213cu132-cp310-abi3-win_amd64.whl" },
+    { url = "https://data.pyg.org/whl/torch-2.13.0%2Bcu132/pyg_lib-0.9.0%2Bpt213cu132-cp310-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl" },
+    { url = "https://data.pyg.org/whl/torch-2.13.0%2Bcu132/pyg_lib-0.9.0%2Bpt213cu132-cp310-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.21.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2206,6 +2216,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pure-eval" },
     { name = "pyarrow" },
+    { name = "pyg-lib" },
     { name = "pyparsing" },
     { name = "pytest" },
     { name = "python-dateutil" },
@@ -2287,6 +2298,7 @@ requires-dist = [
     { name = "psutil", specifier = "==7.2.2" },
     { name = "pure-eval", specifier = "==0.2.3" },
     { name = "pyarrow", specifier = "==24.0.0" },
+    { name = "pyg-lib", specifier = ">=0.9.0" },
     { name = "pyparsing", specifier = "==3.3.2" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "python-dateutil", specifier = "==2.9.0.post0" },
