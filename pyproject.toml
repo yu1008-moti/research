@@ -100,3 +100,18 @@ torch = [
 torchvision = [
   { index = "pytorch-2.13.0-cu132", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+
+[dependency-groups]
+dev = [
+    "black>=26.5.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.pytest.ini_options]
+# リポジトリ直下の test_temp.py 等（test_*.py に一致するがテスト関数ではない
+# スクラッチファイル）を誤って収集・実行しないよう、収集対象を tests/ に限定する。
+testpaths = ["tests"]
+# tests/ 配下には __init__.py を置かない方針のため、scripts.* を絶対importできるよう
+# リポジトリルートを sys.path に追加する。
+pythonpath = ["."]

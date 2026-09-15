@@ -77,16 +77,16 @@ class rel_sql:
     PATH_GRAPHINFO_DB = Template("./scripts/datap/graph/DS/graph_info_${serial_id}.duckdb")
 
     ## SQL FILE PATHS
-    PATH_SQL_TO_FETCH_PRICES = "./scripts/datap/graph/sql/get_table_to_CAPM.sql"
-    PATH_SQL_TO_FETCH_FINANCIALS = "./scripts/datap/graph/sql/get_fin_data_by_week.sql"
-    PATH_SQL_TO_FETCH_OPTIONS = "./scripts/datap/graph/sql/get_table_to_option.sql"
-    PATH_SQL_TO_FETCH_FUTURES = "./scripts/datap/graph/sql/get_table_to_future.sql"
+    PATH_SQL_TO_FETCH_PRICES = "./sql/graph/get_table_to_CAPM.sql"
+    PATH_SQL_TO_FETCH_FINANCIALS = "./sql/graph/get_fin_data_by_week.sql"
+    PATH_SQL_TO_FETCH_OPTIONS = "./sql/graph/get_table_to_option.sql"
+    PATH_SQL_TO_FETCH_FUTURES = "./sql/graph/get_table_to_future.sql"
 
-    PATH_SQL_TO_INSERT_TO_FEATS_TABLE = "./scripts/datap/graph/sql/insert_to_feats_table.sql"
-    PATH_SQL_TO_INSERT_TO_NODE_TABLE = "./scripts/datap/graph/sql/insert_to_node_table.sql"
-    PATH_SQL_TO_INSERT_TO_EDGE_TABLE = "./scripts/datap/graph/sql/insert_to_edge_table.sql"
+    PATH_SQL_TO_INSERT_TO_FEATS_TABLE = "./sql/graph/insert_to_feats_table.sql"
+    PATH_SQL_TO_INSERT_TO_NODE_TABLE = "./sql/graph/insert_to_node_table.sql"
+    PATH_SQL_TO_INSERT_TO_EDGE_TABLE = "./sql/graph/insert_to_edge_table.sql"
 
-    PATH_SQL_TO_CREATE_GRAPHINFO_TABLE = "./scripts/datap/graph/sql/create_graph_info_table.sql"
+    PATH_SQL_TO_CREATE_GRAPHINFO_TABLE = "./sql/graph/create_graph_info_table.sql"
 
     # SQL PARAMETERS
     START_WEEK_ID = 200819

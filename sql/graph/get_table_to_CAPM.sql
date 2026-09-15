@@ -39,10 +39,13 @@ weekly_eqt AS(
     week_id, Code,
     isIPO, isUpL, isLoL,
     AdjO, AdjH, AdjL, AdjC, AdjVo,
-    r_i, -- if(r_i IS NULL, 0, r_i) AS r_i, 
+    if(r_i IS NULL, 0, r_i) AS r_i,
     S33, S17, Mkt, Section_id, Mrgn,
     lag(r_i, -1) OVER w AS r_i_next,
-    if(r_i_next>0, 1, 0) AS y
+    if(r_i_next>0, 1, 0) AS y,
+    -- 系列末尾（翌週データが未確定）では r_i_next が NULL になり y=0 に落ちて
+    -- 「下落」と区別が付かなくなるため、ラベルが有効かどうかを別途持たせる
+    (r_i_next IS NOT NULL) AS y_valid
   FROM add_ReturnValue
   -- WHERE 
     -- Code = '13010' AND
@@ -107,7 +110,8 @@ SELECT
   w.r_i AS r_i,
   j.r_m AS r_m,
   j.r_f AS r_f,
-  w.y
+  w.y,
+  w.y_valid
 FROM weekly_eqt w
 JOIN join_topix_callrate j
 ON w.week_id = j.week_id

@@ -7,7 +7,11 @@
       AdjC_f,
       COALESCE(AAdjC, AdjC_f, MAdjC) AS AAdjC_f,
       COALESCE(MAdjC, LAG(AAdjC_f) OVER w) AS MAdjC_f,
-      CASE WHEN MAdjC_f IS NULL THEN 1 ELSE 0 END AS IPO
+      CASE
+        WHEN ROW_NUMBER() OVER w = 1
+         AND TradeDate > MIN(TradeDate) OVER ()
+        THEN 1 ELSE 0
+      END AS IPO
     FROM (
         SELECT
             CAST(Date AS DATE) AS TradeDate,

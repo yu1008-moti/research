@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime as dt
 from typing import Dict, List, Tuple, TypedDict, cast
 import importlib
@@ -52,6 +53,22 @@ CATEGORICAL_COLUMNS: Dict[str, List[str]] = {
 DATE_COLUMNS: Dict[str, List[str]] = {
     "statement": ["CurFYEn"],
 }
+
+# --------------------------------------------------------------------------
+# 目的変数（予測対象）の列定義。
+# ここに列挙した列は cont（連続値特徴量 x）から必ず除外され、代わりに
+# data[node_type][列名] として HeteroData に直接生やされる（is_target/time_id と同様）。
+# "y" は翌週リターンが正かどうかの2値ラベル、"y_valid" はそのラベルが
+# 定義可能か（系列末尾で翌週データが無い週は False）を示すマスク。
+# --------------------------------------------------------------------------
+LABEL_COLUMNS: Dict[str, List[str]] = {
+    "stock": ["y", "y_valid"],
+}
+
+# 目的変数らしき列名（"y" 単体、または "y_" 始まり）が LABEL_COLUMNS への
+# 登録漏れなどで誤って cont_cols に紛れ込んだ場合に検出するための安全弁。
+# 新しい目的変数を追加する際は LABEL_COLUMNS にも必ず登録すること。
+_LABEL_LIKE_COLUMN_RE = re.compile(r"^y(_.*)?$", re.IGNORECASE)
 
 DEFAULT_VOCAB_DIR = graph_params.DEFAULT_VOCAB_DIR
 
@@ -178,6 +195,7 @@ class NodeFeatsPayload(TypedDict):
     cont: Dict[str, float]
     cat: Dict[str, int]
     date: Dict[str, float]
+    label: Dict[str, float]
 
 
 def parse_feats_json(raw: str) -> NodeFeatsPayload:
@@ -197,6 +215,10 @@ def extract_date(payload: NodeFeatsPayload, date_cols: List[str]) -> List[float]
     return [payload["date"][c] for c in date_cols]
 
 
+def extract_label(payload: NodeFeatsPayload, label_cols: List[str]) -> List[float]:
+    return [payload["label"][c] for c in label_cols]
+
+
 def fetch_node_table(serial_id: int, node_type: str) -> Dict[str, np.ndarray]:
     """指定した node_type の全ノードを取得する。
 
@@ -205,8 +227,10 @@ def fetch_node_table(serial_id: int, node_type: str) -> Dict[str, np.ndarray]:
     代わりに、node_id文字列でソートして「決定的な順序」を確定させ、
     その並び順（0, 1, 2, ...）がそのままローカル整数インデックスになる。
 
-    feats列のJSON構造は {"cont": {...}, "cat": {...}, "date": {...}} を想定
-    （node_feats_define() が書き込む形式と対応させている）。
+    feats列のJSON構造は {"cont": {...}, "cat": {...}, "date": {...}, "label": {...}} を想定
+    （node_feats_define() が書き込む形式と対応させている）。label グループは
+    LABEL_COLUMNS[node_type] に登録された目的変数（例: stock の y / y_valid）を
+    cont とは完全に分離して保持する。
 
     ★ 実際の DB スキーマに合わせて調整してください。
     ここでは graph_node テーブルに次の列がある想定で書いています：
@@ -238,10 +262,18 @@ def fetch_node_table(serial_id: int, node_type: str) -> Dict[str, np.ndarray]:
     else:
         date_feats = np.zeros((len(df), 0), dtype=np.float32)
 
+    # 目的変数（例: stock の y / y_valid）。cont には絶対含めず、ここだけで完結させる。
+    label_cols = LABEL_COLUMNS.get(node_type, [])
+    if label_cols:
+        label_feats = np.stack(parsed.map(lambda p: extract_label(p, label_cols)).to_list())
+    else:
+        label_feats = np.zeros((len(df), 0), dtype=np.float32)
+
     return {
         "x": cont_feats.astype(np.float32),
         "cat_x": cat_feats.astype(np.int64),
         "date_x": date_feats.astype(np.float32),
+        "label_x": label_feats.astype(np.float32),
         "is_target": df["is_target"].to_numpy(dtype=bool),
         "time_id": df["time_id"].to_numpy(dtype=np.int64),
         "node_str_id": df["node_id"].to_numpy(dtype=str),
@@ -742,11 +774,16 @@ class preprocess:
     def node_feats_define(self):
         """銘柄ノード・決算ノードの特徴量を graph_node テーブルに格納する。
 
-        feats 列には次の3グループに分けた JSON を保存する：
-            {"cont": {連続値特徴量}, "cat": {カテゴリの整数ID}, "date": {経過日数}}
-        - cont: そのままモデルの x として使う
-        - cat : モデル側で列ごとに nn.Embedding する（get_vocab_sizes()でサイズ取得）
-        - date: モデル側で Time2Vec 等の時間エンコーディングに渡す
+        feats 列には次の4グループに分けた JSON を保存する：
+            {"cont": {連続値特徴量}, "cat": {カテゴリの整数ID}, "date": {経過日数}, "label": {目的変数}}
+        - cont : そのままモデルの x として使う
+        - cat  : モデル側で列ごとに nn.Embedding する（get_vocab_sizes()でサイズ取得）
+        - date : モデル側で Time2Vec 等の時間エンコーディングに渡す
+        - label: LABEL_COLUMNS[node_type] に登録された目的変数（例: stock の y / y_valid）。
+                 cont とは完全に分離し、data[node_type][列名] として別テンソルになる
+                 （fetch_node_table() 参照）。誤って cont に混ざるとモデルがラベルを
+                 そのまま入力として受け取るリークになるため、cont_cols からは必ず除外し、
+                 かつ「y」「y_」始まりの列が cont_cols に残っていないかもガードする。
         """
         using_df_list = [
             (self.financials_df.copy(), "statement"),
@@ -763,8 +800,20 @@ class preprocess:
 
             cat_cols = CATEGORICAL_COLUMNS.get(node_type, [])
             date_cols = DATE_COLUMNS.get(node_type, [])
-            exclude_cols = {"week_id", "Code", *cat_cols, *date_cols}
+            label_cols = LABEL_COLUMNS.get(node_type, [])
+            exclude_cols = {"week_id", "Code", *cat_cols, *date_cols, *label_cols}
             cont_cols = [c for c in df.columns if c not in exclude_cols]
+
+            # 安全弁: LABEL_COLUMNS への登録漏れ等で目的変数らしき列
+            # （"y" 単体 / "y_" 始まり）が cont_cols に紛れ込んでいないか検査する。
+            # 正規のバックテスト用リターン列 "r_i"/"r_m"/"r_f" は先頭が "y" ではないため
+            # このガードには掛からない。
+            leaked = [c for c in cont_cols if _LABEL_LIKE_COLUMN_RE.match(c)]
+            if leaked:
+                raise ValueError(
+                    f"[{node_type}] 目的変数らしき列が連続値特徴量(cont)に混入しようとしています: "
+                    f"{leaked}. LABEL_COLUMNS['{node_type}'] に追加して cont_cols から除外してください。"
+                )
 
             # カテゴリ列を事前に整数化（保存済みvocabを使用）
             cat_encoded: Dict[str, np.ndarray] = {}
@@ -776,6 +825,11 @@ class preprocess:
             date_encoded: Dict[str, np.ndarray] = {}
             for col in date_cols:
                 date_encoded[col] = date_to_days_since_epoch(df[col])
+
+            # 目的変数列（cont とは分離して保持する）
+            label_encoded: Dict[str, np.ndarray] = {}
+            for col in label_cols:
+                label_encoded[col] = df[col].to_numpy(dtype=np.float32)
 
             for batch_start in range(0, len(df), 1000):
                 batch_end = min(batch_start + 1000, len(df))
@@ -794,6 +848,7 @@ class preprocess:
                         "cont": df_cont_only.iloc[row_pos].to_dict(),
                         "cat": {col: int(cat_encoded[col][g]) for col in cat_cols},
                         "date": {col: float(date_encoded[col][g]) for col in date_cols},
+                        "label": {col: float(label_encoded[col][g]) for col in label_cols},
                     }
                     batch_feats.append(json.dumps(payload))
 
@@ -909,6 +964,12 @@ class graphDataSet(InMemoryDataset):
             data[node_type].x = torch.tensor(node_table["x"], dtype=torch.float)
             data[node_type].cat_x = torch.tensor(node_table["cat_x"], dtype=torch.long)   # (N, カテゴリ列数)
             data[node_type].date_x = torch.tensor(node_table["date_x"], dtype=torch.float)  # (N, 日付列数)
+            # 目的変数（例: stock の y / y_valid）。x とは別テンソルとして持たせる
+            # （LABEL_COLUMNS[node_type] が空なら label_x は (N, 0) で何も生えない）
+            for label_idx, label_col in enumerate(LABEL_COLUMNS.get(node_type, [])):
+                data[node_type][label_col] = torch.tensor(
+                    node_table["label_x"][:, label_idx], dtype=torch.float
+                )
             data[node_type].is_target = torch.tensor(node_table["is_target"], dtype=torch.bool)
             data[node_type].time_id = torch.tensor(node_table["time_id"], dtype=torch.long)
             # 文字列IDは HeteroData に入れず .npy として別保存する（理由は _node_str_id_path 参照）
@@ -965,8 +1026,10 @@ def get_loaders(
     """train/val/test 用の NeighborLoader を1つの単一グラフから構築する。
 
     - グラフ自体は分割しない（過去情報へのアクセスを維持するため）。
-    - is_target かつ time_id が各期間に属する stock ノードだけを
-      input_nodes（＝バッチ生成の起点かつ損失計算対象）とする。
+    - is_target かつ y_valid（翌週リターンが定義できる週。系列末尾は False）かつ
+      time_id が各期間に属する stock ノードだけを input_nodes（＝バッチ生成の
+      起点かつ損失計算対象）とする。y_valid=False のノードはラベルが意味的に
+      不定（y=0 に落ちているだけ）なので、常に学習・評価対象から除外する。
     """
     dataset = graphDataSet(root="scripts/datap/graph/DS", serial_id=serial_id)
     data = dataset[0]
@@ -975,14 +1038,15 @@ def get_loaders(
 
     time_id = data["stock"].time_id
     is_target = data["stock"].is_target
+    y_valid = data["stock"].y_valid.bool()
 
     t_min, t_max = time_id.min().item(), time_id.max().item()
     split_1 = t_min + split_1_per * (t_max - t_min)
     split_2 = t_min + split_2_per * (t_max - t_min)
 
-    train_mask = is_target & (time_id < split_1)
-    val_mask = is_target & (time_id >= split_1) & (time_id < split_2)
-    test_mask = is_target & (time_id >= split_2)
+    train_mask = is_target & y_valid & (time_id < split_1)
+    val_mask = is_target & y_valid & (time_id >= split_1) & (time_id < split_2)
+    test_mask = is_target & y_valid & (time_id >= split_2)
 
     if num_neighbors is None:
         # 明示指定が無ければ、グラフに実在する全エッジ種別に対して

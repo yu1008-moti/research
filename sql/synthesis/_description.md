@@ -1,6 +1,6 @@
-# `db/sql/` 配下 SQL ファイルの処理内容
+# `sql/synthesis/` 配下 SQL ファイルの処理内容
 
-`db/sql/` 配下の各 `*.sql` は、`db/sqlite` / `db/duckdb` に取り込んだ**生テーブル**を、
+`sql/synthesis/` 配下の各 `*.sql` は、`db/sqlite` / `db/duckdb` に取り込んだ**生テーブル**を、
 学習・分析用の**中間テーブル（`*_tmp`）または特徴量ビュー**へ変換する DuckDB スクリプトである。
 生テーブル名・シンボル名の対応は [`scripts/datap/db/cons.py`](../../scripts/datap/db/cons.py) の
 `tbl_names` / `doc_symbols` を参照。
@@ -32,7 +32,14 @@ IPO 初日フラグ付与・業種／市場コードの指数テーブル互換�
    - 場（セッション）別の調整後終値を補完：
      `AAdjC_f = COALESCE(AAdjC, AdjC_f, MAdjC)`（後場）、
      `MAdjC_f = COALESCE(MAdjC, LAG(AAdjC_f))`（前場、無ければ前日後場）。
-   - `MAdjC_f` が NULL（＝前日データ無し）の行を `IPO = 1` とする。
+   - `Code` パーティション内で最初の行（`ROW_NUMBER() OVER w = 1`、`w = PARTITION BY Code ORDER BY TradeDate`）
+     **かつ** その `TradeDate` がデータセット全体の最古日（`MIN(TradeDate) OVER ()`、実質 2008-05-07 のデータ取得開始日）
+     より後である行を `IPO = 1` とする。
+     - 旧実装は `MAdjC_f IS NULL` を条件にしていたが、上場初日に寄り付き取引があると `MAdjC` が非 NULL になり
+       `IPO` が 0 のままになる不具合があった。
+     - 単純に「`Code` ごとの最初の行」だけで判定すると、2008-05-07（データ取得開始日）時点で
+       **既に上場済みだった銘柄**（データ取得範囲の先頭に居合わせただけの銘柄。例：`13010`）まで
+       誤って `IPO = 1` になってしまうため、「データセット全体の最古日より後」という条件を追加して除外している。
 3. `base_v2`：補完後の各終値の NULL を `0` 埋め。
 4. `eqt_main_o`：日次／前場／後場それぞれの OHLC、値幅上限・下限（`UL`/`LL` 等）、
    業種コード `S33`/`S17`、市場コード `Mkt`、信用区分 `Mrgn` を抽出。
