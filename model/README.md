@@ -10,6 +10,57 @@
 `model/baseline/train.py`）。共通の知見はこの `model/README.md` に集約し、各モデルの
 コード側にはモデル固有の設計判断だけを書く。
 
+### モデル構造の可視化
+
+`model/common/visualize.py` の `write_model_structure_md()` を使うと、構築したモデル
+インスタンスのモジュール階層（`named_children()` で辿れる静的な木構造。実際の forward
+計算グラフではない）を Mermaid フローチャートとして `model/<alias>/model_structure.md`
+に書き出せる。新しく `model/<alias>/train.py` を作る際は、モデルをインスタンス化した
+直後に以下を呼ぶ運用にする（`model/baseline/train.py` が実装例）:
+
+```python
+from model.common.visualize import write_model_structure_md
+
+model = SomeModel(...).to(device)
+write_model_structure_md(model, out_dir=Path(__file__).parent)
+```
+
+`model_structure.md` は学習実行のたびに上書きされる自動生成物だが、モデル構造を素早く
+目視確認できるようテキストファイルとしてリポジトリにコミットする想定（`.duckdb`/`.pt`
+等と違い軽量なので `.gitignore` の対象にはしていない）。
+
+### 起動コマンドの規約
+
+`model/<alias>/train.py` は `model/<alias>/` がそのまま Python パッケージパスになる
+（`__init__.py` は置かない namespace package）ため、どのモデルも共通の形で起動できる:
+
+```bash
+uv run python -m model.<alias>.train [--options]
+```
+
+例（`model/baseline/`）:
+
+```bash
+uv run python -m model.baseline.train --serial-id 9999 --epochs 20
+```
+
+新しいモデルを追加する際は `argparse` の引数を以下の2グループに分けて実装する:
+
+- **共通引数**（全モデルで名前・意味を揃える）: `--serial-id`（学習に使う `HeteroData` の
+  serial id）、`--epochs`。TensorBoard 連携を入れるモデルは `--log-dir`
+  （既定 `logs/tensorboard`）・`--run-name`・`--no-tensorboard` も揃える
+  （`model/baseline/train.py` が実装例。ログ出力先や無効化フラグの意味を
+  モデルごとに変えると `uv run tensorboard --logdir logs/tensorboard` で全モデルの
+  実行を横断比較できなくなる）。
+- **モデル固有引数**: `--hidden-dim`/`--num-layers`/`--lr`/`--dropout`/`--batch-size` 等の
+  ハイパーパラメータは各モデルの設計に応じて自由に追加・変更してよい。
+
+別ターミナルで学習曲線を監視する場合（TensorBoard 連携ありのモデル共通）:
+
+```bash
+uv run tensorboard --logdir logs/tensorboard
+```
+
 ## 入力データ: `HeteroData` の構造
 
 グラフは `scripts/datap/graph/data_pipeline.py` の `graphDataSet` が構築する。

@@ -5,18 +5,41 @@
 
 前提: scripts/datap/graph/data_pipeline.get_loaders() が使う HeteroData
 （scripts/datap/graph/DS/processed/data_{serial_id}_full.pt）が既に構築済みであること。
+
+学習曲線のオンラインモニタリング:
+    デフォルトで logs/tensorboard/<run-name>/ に TensorBoard ログを書き出す。
+    学習と並行して別ターミナルで以下を実行するとブラウザでリアルタイムに確認できる。
+
+        uv run tensorboard --logdir logs/tensorboard
+
+    --run-name で実行ごとのログディレクトリ名を指定できる（省略時は serial-id とタイムスタンプ
+    から自動生成）。--no-tensorboard を渡すとログ出力自体を無効化できる。
 """
 
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import HeteroData
 
-from model.baseline.model import BaselineHeteroGNN
-from scripts.datap.graph.data_pipeline import CATEGORICAL_COLUMNS, get_loaders, get_vocab_sizes
+from model.common.visualize import write_model_structure_md
+from scripts.datap.graph.data_pipeline import (
+    CATEGORICAL_COLUMNS,
+    get_loaders,
+    get_vocab_sizes,
+)
+
+if TYPE_CHECKING:
+    # 実行時は main() 内で遅延 import する（理由はそちらのコメント参照）。
+    # 型注釈のためだけに TYPE_CHECKING 下でここに置く（from __future__ import
+    # annotations があるため実行時には評価されない）。
+    from model.baseline.model import BaselineHeteroGNN
 
 NODE_TYPES = ["stock", "statement", "option", "future"]
 
@@ -44,7 +67,7 @@ def stock_labels(batch: HeteroData) -> torch.Tensor:
     return batch["stock"].y.long()
 
 
-def run_epoch(model: BaselineHeteroGNN, loader, device, optimizer=None):
+def run_epoch(model: BaselineHeteroGNN, loader, device, optimizer=None, writer=None, global_step=0):
     is_train = optimizer is not None
     model.train(is_train)
 
@@ -67,11 +90,19 @@ def run_epoch(model: BaselineHeteroGNN, loader, device, optimizer=None):
                 loss.backward()
                 optimizer.step()
 
+            batch_correct = (logits.argmax(dim=-1) == labels).sum().item()
             total_loss += loss.item() * seed_n
-            total_correct += (logits.argmax(dim=-1) == labels).sum().item()
+            total_correct += batch_correct
             total_count += seed_n
 
-    return total_loss / total_count, total_correct / total_count
+            # バッチ単位のログはエポック単位より粒度が細かく、学習中にリアルタイムで
+            # 誤差の遷移（1エポック内での挙動）を追えるようにするためのもの。
+            if is_train and writer is not None:
+                writer.add_scalar("batch/train_loss", loss.item(), global_step)
+                writer.add_scalar("batch/train_acc", batch_correct / seed_n, global_step)
+                global_step += 1
+
+    return total_loss / total_count, total_correct / total_count, global_step
 
 
 def main() -> None:
@@ -83,12 +114,64 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument(
+        "--sampler",
+        type=str,
+        choices=["neighbor", "hgt"],
+        default="neighbor",
+        help=(
+            "近傍サンプリング方式。'neighbor'（既定, NeighborLoader）はエッジタイプ単位で"
+            "一律の近傍数を使う。'hgt'（HGTLoader, HGT論文のHGSampling）はノードタイプ"
+            "ごとに独立した予算・次数正規化サンプリングを行うため、option のようにノード数"
+            "が突出して多いタイプが計算コストを支配するのを緩和できる可能性がある。"
+        ),
+    )
+    parser.add_argument(
+        "--num-neighbors-per-hop",
+        type=int,
+        default=10,
+        help=(
+            "1ホップあたりのサンプル数（'neighbor' では全エッジ種別、'hgt' では全ノード"
+            "種別に一律適用）。ホップ数と合わせてサブグラフサイズ＝1バッチあたりの"
+            "計算コストを左右する最重要パラメータ。小さくすると学習時間短縮が期待できる。"
+        ),
+    )
+    parser.add_argument(
+        "--num-hops",
+        type=int,
+        default=2,
+        help="サンプリングのホップ数。1減らすとサブグラフサイズが大きく縮小し学習が速くなる。",
+    )
+    parser.add_argument("--log-dir", type=str, default="logs/tensorboard", help="TensorBoard ログの出力先ルート")
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="ログディレクトリ名（省略時は serial-id とタイムスタンプから自動生成）",
+    )
+    parser.add_argument("--no-tensorboard", action="store_true", help="TensorBoard へのログ出力を無効化する")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    train_loader, val_loader, test_loader = get_loaders(serial_id=args.serial_id, batch_size=args.batch_size)
+    train_loader, val_loader, test_loader = get_loaders(
+        serial_id=args.serial_id,
+        batch_size=args.batch_size,
+        sampler=args.sampler,
+        num_neighbors_per_hop=args.num_neighbors_per_hop,
+        num_hops=args.num_hops,
+    )
     data = train_loader.data  # 3つの loader は同一の HeteroData を共有している（マスクのみ異なる）
+
+    assert isinstance(data, HeteroData)
+
+    # torch_geometric.nn（GraphConv/HeteroConv）を使う BaselineHeteroGNN の import を
+    # ここまで遅延させている。get_loaders() 呼び出しより前に import すると、上の
+    # データパイプライン処理（pandas/duckdb/statsmodels を多用）と同一プロセス内で
+    # 実行が重なるタイミングでネイティブクラッシュ（ACCESS_VIOLATION）することがある
+    # ため（graphDataSet が一度キャッシュを作ってしまえば再現しなくなる不安定な事象）。
+    # 事前に build_graph_cache_main.py でキャッシュを作っておくのが根本的な回避策。
+    from model.baseline.model import BaselineHeteroGNN
 
     model = BaselineHeteroGNN(
         node_feat_dims=build_node_feat_dims(data, args.serial_id),
@@ -99,18 +182,56 @@ def main() -> None:
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    best_val_acc = 0.0
-    for epoch in range(1, args.epochs + 1):
-        train_loss, train_acc = run_epoch(model, train_loader, device, optimizer)
-        val_loss, val_acc = run_epoch(model, val_loader, device)
-        best_val_acc = max(best_val_acc, val_acc)
-        print(
-            f"[epoch {epoch:03d}] train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
-            f"val_loss={val_loss:.4f} val_acc={val_acc:.4f}"
-        )
+    structure_path = write_model_structure_md(model, out_dir=Path(__file__).parent)
+    print(f"[model structure] wrote {structure_path}")
 
-    test_loss, test_acc = run_epoch(model, test_loader, device)
-    print(f"[test] loss={test_loss:.4f} acc={test_acc:.4f} (best_val_acc={best_val_acc:.4f})")
+    # tensorboard の有無によらず、学習済みモデルのファイル名にも使うため常に決めておく。
+    run_name = args.run_name or f"serial{args.serial_id}_{datetime.now():%Y%m%d_%H%M%S}"
+
+    writer = None
+    if not args.no_tensorboard:
+        run_dir = Path(args.log_dir) / run_name
+        writer = SummaryWriter(log_dir=str(run_dir))
+        writer.add_text(
+            "hparams",
+            f"hidden_dim={args.hidden_dim}, num_layers={args.num_layers}, lr={args.lr}, "
+            f"dropout={args.dropout}, batch_size={args.batch_size}, epochs={args.epochs}",
+        )
+        print(f"[tensorboard] logging to {run_dir}")
+        print(f"[tensorboard] monitor with: uv run tensorboard --logdir {args.log_dir}")
+
+    global_step = 0
+    best_val_acc = 0.0
+    try:
+        for epoch in range(1, args.epochs + 1):
+            train_loss, train_acc, global_step = run_epoch(
+                model, train_loader, device, optimizer, writer=writer, global_step=global_step
+            )
+            val_loss, val_acc, _ = run_epoch(model, val_loader, device)
+            best_val_acc = max(best_val_acc, val_acc)
+            print(
+                f"[epoch {epoch:03d}] train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
+                f"val_loss={val_loss:.4f} val_acc={val_acc:.4f}"
+            )
+
+            if writer is not None:
+                writer.add_scalars("epoch/loss", {"train": train_loss, "val": val_loss}, epoch)
+                writer.add_scalars("epoch/acc", {"train": train_acc, "val": val_acc}, epoch)
+                writer.flush()
+
+        test_loss, test_acc, _ = run_epoch(model, test_loader, device)
+        print(f"[test] loss={test_loss:.4f} acc={test_acc:.4f} (best_val_acc={best_val_acc:.4f})")
+        if writer is not None:
+            writer.add_text("test_result", f"loss={test_loss:.4f}, acc={test_acc:.4f}, best_val_acc={best_val_acc:.4f}")
+
+        model_dir = Path(__file__).parent / "models"
+        model_dir.mkdir(exist_ok=True)
+        model_path = model_dir / f"{run_name}.pt"
+        torch.save(model.state_dict(), model_path)
+        print(f"[model] saved to {model_path}")
+    finally:
+        if writer is not None:
+            writer.close()
 
 
 if __name__ == "__main__":

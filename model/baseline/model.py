@@ -66,6 +66,7 @@ class NodeEncoder(nn.Module):
         out = out + self.cat_lin(cat_embed)
 
         if self.date_lin is not None:
+            assert isinstance(self.date_norm, nn.LayerNorm)
             out = out + self.date_lin(self.date_norm(torch.nan_to_num(date_x)))
 
         return F.relu(out)
@@ -87,9 +88,9 @@ class BaselineHeteroGNN(nn.Module):
         self.encoders = nn.ModuleDict(
             {
                 node_type: NodeEncoder(
-                    cont_dim=dims["cont"],
-                    cat_vocab_sizes=dims["cat"],
-                    date_dim=dims["date"],
+                    cont_dim=dims["cont"]       if isinstance(dims["cont"], int) else 0,
+                    cat_vocab_sizes=dims["cat"] if isinstance(dims["cat"], list) else [],
+                    date_dim=dims["date"]       if isinstance(dims["date"], int) else 0,
                     hidden_dim=hidden_dim,
                 )
                 for node_type, dims in node_feat_dims.items()

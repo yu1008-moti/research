@@ -68,7 +68,23 @@ class graph_params:
     「1ホップあたりの近傍サンプル数」。関係ごとに変えたい場合は
     get_loaders() の num_neighbors 引数で個別に上書きすること。"""
     NUM_HOPS: int = 2
-    """NeighborLoader のホップ数（= num_neighbors のリスト長）。"""
+    """サンプリングのホップ数（NeighborLoader の num_neighbors / HGTLoader の
+    num_samples いずれも、このホップ数分のリストとして渡される）。"""
+
+    SAMPLER: str = "neighbor"
+    """近傍サンプリング方式。'neighbor'（torch_geometric.loader.NeighborLoader、既定）
+    か 'hgt'（torch_geometric.loader.HGTLoader、HGT論文 [Hu+ 2020] の HGSampling を
+    使用）を選ぶ。'neighbor' はエッジタイプ単位で一律の近傍数を使うため、
+    stock/option/future のようにノード数・次数が大きく異なるタイプが混在する
+    ヘテログラフでは、密なタイプ（例: option）がサンプリング／計算コストを
+    支配しやすい。'hgt' はノードタイプごとに独立した予算を持ち、次数で
+    正規化した重要度でサンプリングするため、この不均衡を緩和できる可能性がある。
+    train.py の --sampler で上書き可能。"""
+    NUM_SAMPLES_PER_HOP: int = 10
+    """HGTLoader 使用時、num_samples を明示指定しなかった場合に全ノードタイプへ
+    一律で使う「1ホップあたりのサンプル数」。ノードタイプごとに変えたい場合は
+    get_loaders() の num_samples 引数で個別に上書きすること
+    （例: option ノードは密なので小さめに絞る等）。"""
 
 
 class rel_sql:

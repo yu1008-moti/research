@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch_geometric.data import HeteroData, InMemoryDataset
-from torch_geometric.loader import NeighborLoader
+from torch_geometric.loader import HGTLoader, NeighborLoader
 
 from scripts.datap.graph import capm_corr, derivative_corr
 from scripts.datap.graph.cons import graph_params, rel_sql as cf
@@ -1022,14 +1022,40 @@ def get_loaders(
     split_2_per: float = graph_params.SPLIT_2_PER,
     batch_size: int = graph_params.BATCH_SIZE,
     num_neighbors: Dict[Tuple[str, str, str], List[int]] | None = None,
+    sampler: str = graph_params.SAMPLER,
+    num_samples: Dict[str, List[int]] | List[int] | None = None,
+    num_neighbors_per_hop: int = graph_params.NUM_NEIGHBORS_PER_HOP,
+    num_hops: int = graph_params.NUM_HOPS,
 ):
-    """train/val/test 用の NeighborLoader を1つの単一グラフから構築する。
+    """train/val/test 用の近傍サンプリング Loader を1つの単一グラフから構築する。
 
     - グラフ自体は分割しない（過去情報へのアクセスを維持するため）。
     - is_target かつ y_valid（翌週リターンが定義できる週。系列末尾は False）かつ
       time_id が各期間に属する stock ノードだけを input_nodes（＝バッチ生成の
       起点かつ損失計算対象）とする。y_valid=False のノードはラベルが意味的に
       不定（y=0 に落ちているだけ）なので、常に学習・評価対象から除外する。
+
+    sampler:
+        'neighbor'（既定, torch_geometric.loader.NeighborLoader）:
+            num_neighbors（エッジタイプごとの1ホップあたり近傍数）を使う。
+            明示指定が無ければ num_neighbors_per_hop を num_hops ホップ分、
+            全エッジ種別に一律適用する。
+        'hgt'（torch_geometric.loader.HGTLoader, HGT論文 [Hu+ 2020] の HGSampling）:
+            ※ 実行環境に torch-sparse が必要（本プロジェクトの環境では未導入・
+            対応wheel無しのため現状未検証。導入するとネイティブ拡張が増え、
+            過去に発生したネイティブクラッシュと同種のリスクを伴う点に注意）。
+            num_samples（ノードタイプごとの1ホップあたりサンプル数）を使う。
+            ノードタイプ単位で独立した予算を持ち、次数で正規化した重要度で
+            サンプリングするため、'neighbor' がエッジタイプに一律の近傍数を
+            課すことで生じる、密なタイプ（例: option）への計算コストの偏りを
+            緩和できる可能性がある。
+
+    num_neighbors_per_hop, num_hops:
+        num_neighbors / num_samples を明示指定しない場合に使われる、全タイプ一律の
+        「1ホップあたりサンプル数」と「ホップ数」。ホップ数を増減させると
+        サンプリングされるサブグラフのサイズ（＝1バッチあたりの計算コスト）が
+        指数的に変化するため、学習時間を左右する最も影響の大きいパラメータ。
+        train.py の --num-neighbors-per-hop / --num-hops で上書き可能。
     """
     dataset = graphDataSet(root="scripts/datap/graph/DS", serial_id=serial_id)
     data = dataset[0]
@@ -1048,23 +1074,46 @@ def get_loaders(
     val_mask = is_target & y_valid & (time_id >= split_1) & (time_id < split_2)
     test_mask = is_target & y_valid & (time_id >= split_2)
 
-    if num_neighbors is None:
-        # 明示指定が無ければ、グラフに実在する全エッジ種別に対して
-        # graph_params.NUM_NEIGHBORS_PER_HOP を graph_params.NUM_HOPS ホップ分
-        # 一律に適用する。エッジ種別ごとに差を付けたい場合は、この関数の
-        # num_neighbors 引数に辞書を渡して上書きすればよい
-        # （例: hub化しやすい ("future","rev_derivative","stock") だけ小さくする等）。
-        per_hop = [graph_params.NUM_NEIGHBORS_PER_HOP] * graph_params.NUM_HOPS
-        num_neighbors = {edge_type: per_hop for edge_type in data.edge_types}
+    if sampler == "neighbor":
+        if num_neighbors is None:
+            # 明示指定が無ければ、グラフに実在する全エッジ種別に対して
+            # num_neighbors_per_hop を num_hops ホップ分一律に適用する。
+            # エッジ種別ごとに差を付けたい場合は、この関数の num_neighbors 引数に
+            # 辞書を渡して上書きすればよい
+            # （例: hub化しやすい ("future","rev_derivative","stock") だけ小さくする等）。
+            per_hop = [num_neighbors_per_hop] * num_hops
+            num_neighbors = {edge_type: per_hop for edge_type in data.edge_types}
 
-    def _make_loader(mask: torch.Tensor, shuffle: bool) -> NeighborLoader:
-        return NeighborLoader(
-            data,
-            num_neighbors=num_neighbors,
-            input_nodes=("stock", mask),
-            batch_size=batch_size,
-            shuffle=shuffle,
-        )
+        def _make_loader(mask: torch.Tensor, shuffle: bool) -> NeighborLoader | HGTLoader:
+            return NeighborLoader(
+                data,
+                num_neighbors=num_neighbors,
+                input_nodes=("stock", mask),
+                batch_size=batch_size,
+                shuffle=shuffle,
+            )
+
+    elif sampler == "hgt":
+        if num_samples is None:
+            # 明示指定が無ければ、グラフに実在する全ノードタイプに対して
+            # graph_params.NUM_SAMPLES_PER_HOP を num_hops ホップ分一律に適用する。
+            # ノードタイプごとに差を付けたい場合は、この関数の num_samples 引数に
+            # 辞書を渡して上書きすればよい（例: 母数・次数が大きい "option" だけ
+            # 小さくする等）。
+            per_hop = [graph_params.NUM_SAMPLES_PER_HOP] * num_hops
+            num_samples = {node_type: per_hop for node_type in data.node_types}
+
+        def _make_loader(mask: torch.Tensor, shuffle: bool) -> NeighborLoader | HGTLoader:
+            return HGTLoader(
+                data,
+                num_samples=num_samples,
+                input_nodes=("stock", mask),
+                batch_size=batch_size,
+                shuffle=shuffle,
+            )
+
+    else:
+        raise ValueError(f"unknown sampler: {sampler!r} (expected 'neighbor' or 'hgt')")
 
     train_loader = _make_loader(train_mask, shuffle=True)
     val_loader = _make_loader(val_mask, shuffle=False)
