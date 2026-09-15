@@ -18,3 +18,7 @@
 
 # Remain all .gitkeep files in the repository
 !**/*.gitkeep
+
+# Ignore python cache files
+**/__pycache__/
+*.pyc
