@@ -56,7 +56,7 @@ class ApiLauncher:
         self.interval = 1 / self.rate_limit  # 500 req/s but some margin for error, so 400 req/s
 
         logging.basicConfig(
-            filename=f"logs/{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}.log", 
+            filename=f"logs/text/{dt.now().strftime('%Y-%m-%d_%H-%M-%S')}.log",
             level=logging.ERROR, 
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )

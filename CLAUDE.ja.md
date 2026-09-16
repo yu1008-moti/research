@@ -2,6 +2,8 @@
 
 `CLAUDE.md`（Claude Codeが自動的に読み込む本体ファイル、英語）の日本語版です。内容は同一で、人間が読む用の対訳として用意しています。**Claude Codeへの指示ファイルとしては`CLAUDE.md`が正となるため、内容を変更する場合は両方のファイルを更新してください。**
 
+（`CLAUDE.md`側にも同趣旨の指示を明記済み: `CLAUDE.md`の内容を変更した際は、同じ変更を同じターン内で`CLAUDE.ja.md`にも反映すること。）
+
 ## プロジェクト概要
 
 個人の研究用リポジトリ（日本株・デリバティブ）。パイプラインの全体像は以下の通り。
@@ -64,7 +66,10 @@ pythonpath = ["."]
 - `model/` — GNNモデルのコード（現状は最小限のWIP `Dataset`ラッパーのみ）。
 - `notebooks/`、`graph_lab/`、`to_visualize_graph.ipynb` — 探索・検証用ノートブック。`graph_lab/sql/archive/`には`sql/graph/`に置き換えられた初期の試作クエリを参考用に残してある（コードからは参照されない）。
 - `claude_output/` — Claude Codeセッションが実装内容をまとめたMarkdownレポート/仕様書の格納先（例: `graph_spec.md`、`derivative_nodes_edges_implementation.md`、`heterodata_batch_output_explained.md`）。作業内容のまとめ・仕様書作成を依頼された場合、特に指示が無ければここに出力する。
-- `csv/`、`masks/`、`images/`、`md/`、`logs/` — データ/出力用の作業ディレクトリ（中身はgitignore対象）。
+- `csv/`、`masks/`、`images/`、`md/` — データ/出力用の作業ディレクトリ（中身はgitignore対象）。
+- `logs/` — 通常のログファイルとTensorBoardの実行ログが混在して煩雑にならないよう、2つのサブディレクトリに分離してある:
+  - `logs/text/` — 通常の`*.log`テキストログファイル（詳細は後述の「ログ出力先」の注意点を参照）。
+  - `logs/tensorboard/` — `model/baseline/train.py`が書き出すTensorBoardの実行ディレクトリ（イベントファイル）。
 
 ## このリポジトリ特有の注意点・落とし穴
 
@@ -73,3 +78,4 @@ pythonpath = ["."]
 - **コードごとにループしながら1行ずつDBにinsertする実装は避ける**: 銘柄・オプション・先物の多数のコードにまたがってエッジ/特徴量を構築する際、このパターンで実際に約30分規模の性能劣化が発生した実績がある。`groupby()/shift()`やpivotベースのベクトル化（`derivative_corr.py`、`data_pipeline.py`の`_prev_chain_preprocess`を参照）＋1回のバルクinsertを優先すること。
 - **`HeteroData`のrepr表記**: 出力された`HeteroData`/`NeighborLoader`バッチの`x=[258, 12]`のような表記は、テンソルの**値ではなく形状（shape）**を表す。
 - DuckDBのグラフ情報テーブル（`node_type`、`edge_type`）はフリーテキストのVARCHARであり、新しいノード/エッジタイプの追加はスキーマに対して非破壊的。新規追加時はDB側ではなく、Python側のレジストリ（`data_pipeline.py`内の`REVERSE_RELATIONS`、`CATEGORICAL_COLUMNS`、`using_df_list`）を拡張すればよい。
+- **ログ出力先**: スクリプトやその場限りの実行で書き出す通常のテキストログファイルは、必ず`./logs/text/`配下に出力すること（例: `logs/text/<script>_<timestamp>.log`）。リポジトリ直下や`./logs/`直下、その他の場所に置いてはいけない。`scripts/api/download_util_async.py`は既にこの規約に従っている（`logging.basicConfig(filename=f"logs/text/{...}.log", ...)`）ので、新しくログ設定を書く際のパターンとして参照すること。TensorBoardの実行ログはこれとは別扱いで、`./logs/tensorboard/`配下に出力する（`model/baseline/train.py`の`--log-dir`のデフォルト値を参照）。どちらのサブディレクトリもgitignore対象（ディレクトリマップ参照）なので、コミットを汚染することはない。

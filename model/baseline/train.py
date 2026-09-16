@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,7 +29,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import HeteroData
 
-from model.common.visualize import write_model_structure_md
+from model.common.visualize import plot_training_curves, write_model_structure_md
 from scripts.datap.graph.data_pipeline import (
     CATEGORICAL_COLUMNS,
     get_loaders,
@@ -202,6 +203,7 @@ def main() -> None:
 
     global_step = 0
     best_val_acc = 0.0
+    history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
     try:
         for epoch in range(1, args.epochs + 1):
             train_loss, train_acc, global_step = run_epoch(
@@ -209,6 +211,10 @@ def main() -> None:
             )
             val_loss, val_acc, _ = run_epoch(model, val_loader, device)
             best_val_acc = max(best_val_acc, val_acc)
+            history["train_loss"].append(train_loss)
+            history["val_loss"].append(val_loss)
+            history["train_acc"].append(train_acc)
+            history["val_acc"].append(val_acc)
             print(
                 f"[epoch {epoch:03d}] train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
                 f"val_loss={val_loss:.4f} val_acc={val_acc:.4f}"
@@ -229,6 +235,39 @@ def main() -> None:
         model_path = model_dir / f"{run_name}.pt"
         torch.save(model.state_dict(), model_path)
         print(f"[model] saved to {model_path}")
+
+        # eval.py がチェックポイント単体からモデルを再構築できるよう、state_dict の
+        # 復元に必要なハイパーパラメータ（アーキテクチャに関わるもの）をサイドカー
+        # JSON として残す（.pt には state_dict しか入っておらず、これらの値は
+        # どこにも永続化されないため）。
+        config_path = model_dir / f"{run_name}.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "serial_id": args.serial_id,
+                    "hidden_dim": args.hidden_dim,
+                    "num_layers": args.num_layers,
+                    "dropout": args.dropout,
+                    "batch_size": args.batch_size,
+                    "sampler": args.sampler,
+                    "num_neighbors_per_hop": args.num_neighbors_per_hop,
+                    "num_hops": args.num_hops,
+                    "epochs": args.epochs,
+                    "lr": args.lr,
+                    "best_val_acc": best_val_acc,
+                    "test_loss": test_loss,
+                    "test_acc": test_acc,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"[model] config saved to {config_path}")
+
+        curves_path = model_dir / f"{run_name}.png"
+        plot_training_curves(history, curves_path, title=run_name)
+        print(f"[curves] saved to {curves_path}")
     finally:
         if writer is not None:
             writer.close()

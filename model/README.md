@@ -61,6 +61,34 @@ uv run python -m model.baseline.train --serial-id 9999 --epochs 20
 uv run tensorboard --logdir logs/tensorboard
 ```
 
+TensorBoard はリアルタイム監視向けで実行後に消えるログサーバだが、学習完了後に
+静的な画像としても残したい場合のために `model/common/visualize.py` の
+`plot_training_curves()` を使う。学習ループでエポックごとの
+`train_loss`/`val_loss`/`train_acc`/`val_acc` を `history` dict に蓄積し、学習終了時に
+`model/<alias>/models/<run_name>.png`（`.pt`/`.json` と同じ basename）として保存する
+（`model/baseline/train.py` が実装例）。`.png` も `.pt`/`.json` 同様 `.gitignore` 対象。
+
+### 評価専用スクリプト（`eval.py`）
+
+学習済みチェックポイント（`model/<alias>/models/*.pt`）を再学習せずに評価するだけの
+場合は `train.py` と対にした `eval.py` を用意する（`model/baseline/eval.py` が実装例）。
+`.pt` には `state_dict` しか入っておらず、モデルを再構築するのに必要な
+`hidden_dim`/`num_layers`/`dropout` 等のハイパーパラメータはどこにも残らないため、
+`train.py` は保存時に同名の `<run_name>.json`（サイドカー設定ファイル）を
+`model/<alias>/models/` に併せて書き出す（`.pt`/`.json` とも `.gitignore` 対象）。
+`eval.py` はこのサイドカーを自動で読み込んでモデルを再構築する。サイドカーが無い
+チェックポイント（この運用より前に保存されたもの）を評価する場合は、学習時に
+使った値を CLI 引数で明示的に指定する必要がある。
+
+```bash
+uv run python -m model.baseline.eval --model-path model/baseline/models/<run_name>.pt
+uv run python -m model.baseline.eval --model-path model/baseline/models/<run_name>.pt --split all
+```
+
+新しいモデルを追加する際、`train.py` 側は保存時にサイドカー JSON も書き出す
+（アーキテクチャ再構築に必要な引数一式 + `serial_id`）方針を揃え、`eval.py` 側は
+共通引数として `--model-path`・`--split`（train/val/test/all）を持たせる。
+
 ## 入力データ: `HeteroData` の構造
 
 グラフは `scripts/datap/graph/data_pipeline.py` の `graphDataSet` が構築する。

@@ -82,3 +82,48 @@ def write_model_structure_md(
     )
     out_path.write_text(content, encoding="utf-8")
     return out_path
+
+
+def plot_training_curves(
+    history: dict[str, list[float]],
+    out_path: str | Path,
+    title: str | None = None,
+) -> Path:
+    """train/val の loss・accuracy 曲線を1枚の PNG として書き出す。
+
+    `history` は `{"train_loss": [...], "val_loss": [...], "train_acc": [...], "val_acc": [...]}`
+    のようにエポック順の値を持つ dict（`train.py` のエポックループで蓄積したもの）を想定する。
+    表示環境が無い CLI 実行（`uv run python -m model.<alias>.train`）でも保存だけできるよう、
+    Agg バックエンドを明示的に使う。
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    epochs = range(1, len(history["train_loss"]) + 1)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    axes[0].plot(epochs, history["train_loss"], label="train")
+    axes[0].plot(epochs, history["val_loss"], label="val")
+    axes[0].set_xlabel("epoch")
+    axes[0].set_ylabel("loss")
+    axes[0].set_title("loss")
+    axes[0].legend()
+
+    axes[1].plot(epochs, history["train_acc"], label="train")
+    axes[1].plot(epochs, history["val_acc"], label="val")
+    axes[1].set_xlabel("epoch")
+    axes[1].set_ylabel("accuracy")
+    axes[1].set_title("accuracy")
+    axes[1].legend()
+
+    if title:
+        fig.suptitle(title)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path

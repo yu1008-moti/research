@@ -3,6 +3,8 @@
 This file provides guidance to Claude Code when working in this repository.
 Language used to display plain texts is **Japanese** unless the user explicitly requests otherwise.
 
+A Japanese translation of this file lives at `CLAUDE.ja.md` (for human readers; this file, `CLAUDE.md`, is authoritative for Claude Code). **Whenever you change the content of this file, mirror the same change into `CLAUDE.ja.md` in the same turn** — do not leave the two out of sync.
+
 ## Project overview
 
 Personal research repository (Japanese equities/derivatives). The pipeline goes:
@@ -65,7 +67,10 @@ This exists because of a real footgun: the repo root has a `test_temp.py` (not a
 - `model/` — GNN model code (currently a minimal WIP `Dataset` wrapper).
 - `notebooks/`, `graph_lab/`, `to_visualize_graph.ipynb` — exploratory/scratch notebooks. `graph_lab/sql/archive/` holds early draft queries superseded by `sql/graph/` — kept for reference only, not used by any code.
 - `claude_output/` — Markdown reports/specs written by Claude Code sessions documenting implementation work (e.g. `graph_spec.md`, `derivative_nodes_edges_implementation.md`, `heterodata_batch_output_explained.md`). When the user asks for a written summary/spec of work done, put it here unless told otherwise.
-- `csv/`, `masks/`, `images/`, `md/`, `logs/` — data/output scratch directories (gitignored contents).
+- `csv/`, `masks/`, `images/`, `md/` — data/output scratch directories (gitignored contents).
+- `logs/` — split into two subdirectories so plain log files and TensorBoard runs don't clutter each other:
+  - `logs/text/` — plain `*.log` text log files (see the "Log output location" convention below).
+  - `logs/tensorboard/` — TensorBoard run directories (event files), written by `model/baseline/train.py`.
 
 ## Conventions and gotchas specific to this repo
 
@@ -74,3 +79,4 @@ This exists because of a real footgun: the repo root has a `test_temp.py` (not a
 - **Never loop per-code with per-row DB inserts** when building edges/features across many stock/option/future codes — this pipeline has hit real ~30-minute performance regressions from that pattern. Prefer vectorized `groupby()/shift()`/pivot-based approaches (see `derivative_corr.py`, `_prev_chain_preprocess` in `data_pipeline.py`) plus a single bulk insert.
 - **`HeteroData` repr**: fields like `x=[258, 12]` in printed `HeteroData`/`NeighborLoader` batches denote tensor *shape*, not value.
 - Node/edge type strings in the DuckDB graph-info tables (`node_type`, `edge_type`) are free-text VARCHAR — adding a new node or edge type is schema-agnostic; extend the Python-side registries (`REVERSE_RELATIONS`, `CATEGORICAL_COLUMNS`, `using_df_list` in `data_pipeline.py`) instead.
+- **Log output location**: any plain-text log file written by a script or ad-hoc run must go under `./logs/text/` (e.g. `logs/text/<script>_<timestamp>.log`), never at the repo root, directly under `./logs/`, or elsewhere. `scripts/api/download_util_async.py` already follows this (`logging.basicConfig(filename=f"logs/text/{...}.log", ...)`) — use it as the pattern for new logging setup. TensorBoard runs are a separate case and go under `./logs/tensorboard/` instead (see `model/baseline/train.py`'s `--log-dir` default). Both subdirectories are gitignored (see Directory map) so this never pollutes commits.
