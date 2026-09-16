@@ -19,12 +19,15 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
+from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import HeteroData
@@ -68,40 +71,70 @@ def stock_labels(batch: HeteroData) -> torch.Tensor:
     return batch["stock"].y.long()
 
 
-def run_epoch(model: BaselineHeteroGNN, loader, device, optimizer=None, writer=None, global_step=0):
+def run_epoch(
+    model: BaselineHeteroGNN,
+    loader,
+    device,
+    optimizer=None,
+    writer=None,
+    global_step=0,
+    use_profiler=False,
+    profile_batches=20,
+):
     is_train = optimizer is not None
     model.train(is_train)
 
     total_loss, total_correct, total_count = 0.0, 0, 0
+
+    def step(batch):
+        nonlocal total_loss, total_correct, total_count, global_step
+        batch = batch.to(device)
+        labels = stock_labels(batch)
+
+        # NeighborLoader は起点（seed）ノードを各ノードタイプの配列の先頭に置く。
+        # 損失・精度は起点ノード（＝このバッチで実際に予測したい stock ノード）のみで計算する。
+        seed_n = batch["stock"].batch_size
+        logits = model(batch)[:seed_n]
+        labels = labels[:seed_n]
+
+        loss = F.cross_entropy(logits, labels)
+
+        if is_train and isinstance(optimizer, torch.optim.Optimizer):
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        batch_correct = (logits.argmax(dim=-1) == labels).sum().item()
+        total_loss += loss.item() * seed_n
+        total_correct += batch_correct
+        total_count += seed_n
+
+        # バッチ単位のログはエポック単位より粒度が細かく、学習中にリアルタイムで
+        # 誤差の遷移（1エポック内での挙動）を追えるようにするためのもの。
+        if is_train and writer is not None:
+            writer.add_scalar("batch/train_loss", loss.item(), global_step)
+            writer.add_scalar("batch/train_acc", batch_correct / seed_n, global_step)
+            global_step += 1
+
     with torch.set_grad_enabled(is_train):
-        for batch in loader:
-            batch = batch.to(device)
-            labels = stock_labels(batch)
+        loader_iter = iter(loader)
 
-            # NeighborLoader は起点（seed）ノードを各ノードタイプの配列の先頭に置く。
-            # 損失・精度は起点ノード（＝このバッチで実際に予測したい stock ノード）のみで計算する。
-            seed_n = batch["stock"].batch_size
-            logits = model(batch)[:seed_n]
-            labels = labels[:seed_n]
-
-            loss = F.cross_entropy(logits, labels)
-
-            if is_train:
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-            batch_correct = (logits.argmax(dim=-1) == labels).sum().item()
-            total_loss += loss.item() * seed_n
-            total_correct += batch_correct
-            total_count += seed_n
-
-            # バッチ単位のログはエポック単位より粒度が細かく、学習中にリアルタイムで
-            # 誤差の遷移（1エポック内での挙動）を追えるようにするためのもの。
-            if is_train and writer is not None:
-                writer.add_scalar("batch/train_loss", loss.item(), global_step)
-                writer.add_scalar("batch/train_acc", batch_correct / seed_n, global_step)
-                global_step += 1
+        if use_profiler:
+            # torch.profiler はプロファイル区間中に発生した全イベントを保持し続けるため、
+            # エポック全体を対象にすると（バッチ数×グラフサイズに比例して）ホストメモリ
+            # 使用量が際限なく増え続ける。ここでは先頭 profile_batches 件だけを計測して
+            # 即座に打ち切る（残りのバッチは処理しない）。1エポック分を最後まで回す通常の
+            # 学習とは別の、性能診断専用の経路として扱う。
+            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+                for batch in itertools.islice(loader_iter, profile_batches):
+                    step(batch)
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            print(prof.key_averages().table(sort_by="cuda_time", row_limit=40))
+            prof.export_chrome_trace("./trace.json")
+        else:
+            for batch in loader_iter:
+                step(batch)
 
     return total_loss / total_count, total_correct / total_count, global_step
 
@@ -109,7 +142,7 @@ def run_epoch(model: BaselineHeteroGNN, loader, device, optimizer=None, writer=N
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial-id", type=int, default=9999)
-    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -143,6 +176,20 @@ def main() -> None:
         default=2,
         help="サンプリングのホップ数。1減らすとサブグラフサイズが大きく縮小し学習が速くなる。",
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=2,
+        help=(
+            "NeighborLoader/HGTLoader のバックグラウンドワーカープロセス数。既定は2。"
+            "実測（32GB RAM/Windows、既定ハイパーパラメータ）では num_workers=0 比で"
+            "約2.5倍高速化し（91.8ms/batch -> 36.1ms/batch）、4に増やしても伸びない一方"
+            "メモリだけ余分に使う。0を指定するとメインプロセスのみでサンプリングする"
+            "（従来の挙動）。このスクリプトは if __name__ == '__main__': 配下で"
+            "get_loaders() を呼んでいるため安全だが、他のエントリポイントから"
+            "get_loaders(num_workers>0) を呼ぶ場合は同様のガードが必須。"
+        ),
+    )
     parser.add_argument("--log-dir", type=str, default="logs/tensorboard", help="TensorBoard ログの出力先ルート")
     parser.add_argument(
         "--run-name",
@@ -151,6 +198,20 @@ def main() -> None:
         help="ログディレクトリ名（省略時は serial-id とタイムスタンプから自動生成）",
     )
     parser.add_argument("--no-tensorboard", action="store_true", help="TensorBoard へのログ出力を無効化する")
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help=(
+            "torch.profiler による計測を有効化する（既定は無効）。エポック全体ではなく"
+            "各学習エポックの先頭 --profile-batches バッチのみを計測し、結果を標準出力に表示する。"
+        ),
+    )
+    parser.add_argument(
+        "--profile-batches",
+        type=int,
+        default=20,
+        help="--profile 有効時に計測対象とする先頭バッチ数",
+    )
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -161,6 +222,7 @@ def main() -> None:
         sampler=args.sampler,
         num_neighbors_per_hop=args.num_neighbors_per_hop,
         num_hops=args.num_hops,
+        num_workers=args.num_workers,
     )
     data = train_loader.data  # 3つの loader は同一の HeteroData を共有している（マスクのみ異なる）
 
@@ -207,8 +269,27 @@ def main() -> None:
     try:
         for epoch in range(1, args.epochs + 1):
             train_loss, train_acc, global_step = run_epoch(
-                model, train_loader, device, optimizer, writer=writer, global_step=global_step
+                model,
+                train_loader,
+                device,
+                optimizer,
+                writer=writer,
+                global_step=global_step,
+                use_profiler=args.profile,
+                profile_batches=args.profile_batches,
             )
+
+            if args.profile:
+                # --profile は性能診断用の単発計測が目的なので、先頭 profile_batches 件を
+                # 計測し終えた時点で即座に打ち切る。残りの学習バッチ・val/test評価・モデル
+                # 保存・学習曲線プロットは診断とは無関係な上、待ち時間を大きく増やすため
+                # 行わない。
+                print(
+                    f"[profile] profiled first {args.profile_batches} batches "
+                    f"(train_loss={train_loss:.4f}, train_acc={train_acc:.4f}); exiting."
+                )
+                sys.exit(0)
+
             val_loss, val_acc, _ = run_epoch(model, val_loader, device)
             best_val_acc = max(best_val_acc, val_acc)
             history["train_loss"].append(train_loss)

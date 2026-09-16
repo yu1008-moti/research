@@ -76,6 +76,9 @@ def build_peer_corr_edges(
     for gi, key in enumerate(groups, start=1):
         print(f"\r[peer_corr:{group_col}] group {gi}/{n_groups}: {key}", end=" ")
         sub = work[work[group_col] == key]
+
+        assert isinstance(sub, pd.DataFrame), f"sub is not a DataFrame: {type(sub)}"
+
         if sub[code_col].nunique() < 2:
             continue
 

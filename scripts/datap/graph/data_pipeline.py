@@ -103,6 +103,12 @@ def _allow_numpy_globals_for_torch_load() -> None:
 # 値の定義は scripts/datap/graph/cons.py の graph_params に集約されている。
 TIME_ENCODING_EPOCH = pd.Timestamp(graph_params.TIME_ENCODING_EPOCH)
 
+# 浮動小数点特徴量の精度。numpy 側は FEATURE_FLOAT_DTYPE、
+# HeteroData への tensor化時は TORCH_FLOAT_DTYPE を使う。
+# 値の定義は scripts/datap/graph/cons.py の graph_params に集約されている。
+FEATURE_FLOAT_DTYPE = graph_params.FEATURE_FLOAT_DTYPE
+TORCH_FLOAT_DTYPE = graph_params.TORCH_FLOAT_DTYPE
+
 
 def date_to_days_since_epoch(date_series: pd.Series) -> np.ndarray:
     """日付列を TIME_ENCODING_EPOCH からの経過日数(float)に変換する。
@@ -110,7 +116,7 @@ def date_to_days_since_epoch(date_series: pd.Series) -> np.ndarray:
     ★ ここでは sin/cos 変換はしない。Time2Vec は周波数が学習パラメータ
     なので、前処理側では「生の時間スカラー」を渡すだけにするのが正しい。
     """
-    ret = (pd.to_datetime(date_series) - TIME_ENCODING_EPOCH).dt.days.astype(np.float32).values
+    ret = (pd.to_datetime(date_series) - TIME_ENCODING_EPOCH).dt.days.astype(FEATURE_FLOAT_DTYPE).values
     assert isinstance(ret, np.ndarray)
     return ret
 
@@ -260,20 +266,20 @@ def fetch_node_table(serial_id: int, node_type: str) -> Dict[str, np.ndarray]:
     if date_cols:
         date_feats = np.stack(parsed.map(lambda p: extract_date(p, date_cols)).to_list())
     else:
-        date_feats = np.zeros((len(df), 0), dtype=np.float32)
+        date_feats = np.zeros((len(df), 0), dtype=FEATURE_FLOAT_DTYPE)
 
     # 目的変数（例: stock の y / y_valid）。cont には絶対含めず、ここだけで完結させる。
     label_cols = LABEL_COLUMNS.get(node_type, [])
     if label_cols:
         label_feats = np.stack(parsed.map(lambda p: extract_label(p, label_cols)).to_list())
     else:
-        label_feats = np.zeros((len(df), 0), dtype=np.float32)
+        label_feats = np.zeros((len(df), 0), dtype=FEATURE_FLOAT_DTYPE)
 
     return {
-        "x": cont_feats.astype(np.float32),
+        "x": cont_feats.astype(FEATURE_FLOAT_DTYPE),
         "cat_x": cat_feats.astype(np.int64),
-        "date_x": date_feats.astype(np.float32),
-        "label_x": label_feats.astype(np.float32),
+        "date_x": date_feats.astype(FEATURE_FLOAT_DTYPE),
+        "label_x": label_feats.astype(FEATURE_FLOAT_DTYPE),
         "is_target": df["is_target"].to_numpy(dtype=bool),
         "time_id": df["time_id"].to_numpy(dtype=np.int64),
         "node_str_id": df["node_id"].to_numpy(dtype=str),
@@ -829,7 +835,7 @@ class preprocess:
             # 目的変数列（cont とは分離して保持する）
             label_encoded: Dict[str, np.ndarray] = {}
             for col in label_cols:
-                label_encoded[col] = df[col].to_numpy(dtype=np.float32)
+                label_encoded[col] = df[col].to_numpy(dtype=FEATURE_FLOAT_DTYPE)
 
             for batch_start in range(0, len(df), 1000):
                 batch_end = min(batch_start + 1000, len(df))
@@ -961,14 +967,14 @@ class graphDataSet(InMemoryDataset):
         node_id_to_idx: Dict[str, Dict[str, int]] = {}
         for node_type in ["stock", "statement", "option", "future"]:
             node_table = fetch_node_table(self.serial_id, node_type)
-            data[node_type].x = torch.tensor(node_table["x"], dtype=torch.float)
+            data[node_type].x = torch.tensor(node_table["x"], dtype=TORCH_FLOAT_DTYPE)
             data[node_type].cat_x = torch.tensor(node_table["cat_x"], dtype=torch.long)   # (N, カテゴリ列数)
-            data[node_type].date_x = torch.tensor(node_table["date_x"], dtype=torch.float)  # (N, 日付列数)
+            data[node_type].date_x = torch.tensor(node_table["date_x"], dtype=TORCH_FLOAT_DTYPE)  # (N, 日付列数)
             # 目的変数（例: stock の y / y_valid）。x とは別テンソルとして持たせる
             # （LABEL_COLUMNS[node_type] が空なら label_x は (N, 0) で何も生えない）
             for label_idx, label_col in enumerate(LABEL_COLUMNS.get(node_type, [])):
                 data[node_type][label_col] = torch.tensor(
-                    node_table["label_x"][:, label_idx], dtype=torch.float
+                    node_table["label_x"][:, label_idx], dtype=TORCH_FLOAT_DTYPE
                 )
             data[node_type].is_target = torch.tensor(node_table["is_target"], dtype=torch.bool)
             data[node_type].time_id = torch.tensor(node_table["time_id"], dtype=torch.long)
@@ -996,7 +1002,7 @@ class graphDataSet(InMemoryDataset):
             )
 
             data[src_t, rel, dst_t].edge_index = torch.tensor(edge_index_int, dtype=torch.long)
-            data[src_t, rel, dst_t].edge_weight = torch.tensor(edge_weight[idx], dtype=torch.float)
+            data[src_t, rel, dst_t].edge_weight = torch.tensor(edge_weight[idx], dtype=TORCH_FLOAT_DTYPE)
             data[src_t, rel, dst_t].edge_time = torch.tensor(edge_time[idx], dtype=torch.long)
 
             # 逆エッジを必要とする関係なら追加する
@@ -1005,7 +1011,7 @@ class graphDataSet(InMemoryDataset):
                 rev_rel = REVERSE_RELATIONS[key]
                 rev_edge_index = edge_index_int[[1, 0], :]  # src/dst を入れ替え
                 data[dst_t, rev_rel, src_t].edge_index = torch.tensor(rev_edge_index, dtype=torch.long)
-                data[dst_t, rev_rel, src_t].edge_weight = torch.tensor(edge_weight[idx], dtype=torch.float)
+                data[dst_t, rev_rel, src_t].edge_weight = torch.tensor(edge_weight[idx], dtype=TORCH_FLOAT_DTYPE)
                 data[dst_t, rev_rel, src_t].edge_time = torch.tensor(edge_time[idx], dtype=torch.long)
 
         return data
@@ -1026,6 +1032,7 @@ def get_loaders(
     num_samples: Dict[str, List[int]] | List[int] | None = None,
     num_neighbors_per_hop: int = graph_params.NUM_NEIGHBORS_PER_HOP,
     num_hops: int = graph_params.NUM_HOPS,
+    num_workers: int = graph_params.NUM_WORKERS,
 ):
     """train/val/test 用の近傍サンプリング Loader を1つの単一グラフから構築する。
 
@@ -1056,6 +1063,18 @@ def get_loaders(
         サンプリングされるサブグラフのサイズ（＝1バッチあたりの計算コスト）が
         指数的に変化するため、学習時間を左右する最も影響の大きいパラメータ。
         train.py の --num-neighbors-per-hop / --num-hops で上書き可能。
+
+    num_workers:
+        NeighborLoader/HGTLoader のバックグラウンドワーカープロセス数。既定は
+        graph_params.NUM_WORKERS（=0、メインプロセスのみ）。0より大きい値を渡す
+        場合、呼び出し元は必ず `if __name__ == "__main__":` 配下で get_loaders()
+        を呼ぶこと（Windows の multiprocessing は spawn 方式のため、ガードが
+        無いと各ワーカープロセスがモジュールのトップレベルコードを再実行して
+        しまう。repo root の test_temp.py はガード無しでこの関数を呼んでいるため
+        特に注意）。0より大きい場合のみ persistent_workers=True・
+        prefetch_factor=4 を内部で付与する（PyTorchは num_workers=0 に対して
+        これらの引数を渡すとエラーになるため）。train.py の --num-workers で
+        上書き可能。
     """
     dataset = graphDataSet(root="scripts/datap/graph/DS", serial_id=serial_id)
     data = dataset[0]
@@ -1074,6 +1093,10 @@ def get_loaders(
     val_mask = is_target & y_valid & (time_id >= split_1) & (time_id < split_2)
     test_mask = is_target & y_valid & (time_id >= split_2)
 
+    # num_workers=0 に persistent_workers/prefetch_factor を渡すと PyTorch が
+    # ValueError を出すため、0より大きい場合のみ付与する（**kwargs 展開だと
+    # NeighborLoader/HGTLoader 側の厳密な引数型と噛み合わず型チェッカーが
+    # 誤検知するため、if分岐で明示的に呼び分ける）。
     if sampler == "neighbor":
         if num_neighbors is None:
             # 明示指定が無ければ、グラフに実在する全エッジ種別に対して
@@ -1085,6 +1108,17 @@ def get_loaders(
             num_neighbors = {edge_type: per_hop for edge_type in data.edge_types}
 
         def _make_loader(mask: torch.Tensor, shuffle: bool) -> NeighborLoader | HGTLoader:
+            if num_workers > 0:
+                return NeighborLoader(
+                    data,
+                    num_neighbors=num_neighbors,
+                    input_nodes=("stock", mask),
+                    batch_size=batch_size,
+                    shuffle=shuffle,
+                    num_workers=num_workers,
+                    persistent_workers=True,
+                    prefetch_factor=4,
+                )
             return NeighborLoader(
                 data,
                 num_neighbors=num_neighbors,
@@ -1104,6 +1138,17 @@ def get_loaders(
             num_samples = {node_type: per_hop for node_type in data.node_types}
 
         def _make_loader(mask: torch.Tensor, shuffle: bool) -> NeighborLoader | HGTLoader:
+            if num_workers > 0:
+                return HGTLoader(
+                    data,
+                    num_samples=num_samples,
+                    input_nodes=("stock", mask),
+                    batch_size=batch_size,
+                    shuffle=shuffle,
+                    num_workers=num_workers,
+                    persistent_workers=True,
+                    prefetch_factor=4,
+                )
             return HGTLoader(
                 data,
                 num_samples=num_samples,

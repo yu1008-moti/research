@@ -114,7 +114,7 @@ class BaselineHeteroGNN(nn.Module):
             node_type: encoder(batch[node_type].x, batch[node_type].cat_x, batch[node_type].date_x)
             for node_type, encoder in self.encoders.items()
         }
-        edge_index_dict = {et: batch[et].edge_index for et in batch.edge_types}
+        edge_index_dict  = {et: batch[et].edge_index  for et in batch.edge_types}
         edge_weight_dict = {et: batch[et].edge_weight for et in batch.edge_types}
 
         for conv in self.convs:

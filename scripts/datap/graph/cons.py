@@ -1,6 +1,9 @@
 from string import Template
 from typing import List, Optional
 
+import numpy as np
+import torch
+
 
 class graph_params:
     """グラフ構築に関わる、ユーザーが調整し得るハイパーパラメータをまとめたクラス。
@@ -53,6 +56,13 @@ class graph_params:
     """カテゴリ変数 vocab（{値: 整数ID}）の保存先ディレクトリ。"""
     TIME_ENCODING_EPOCH: str = "2000-01-01"
     """Time2Vec 等の時間エンコーディングの基準日（この日からの経過日数を特徴量にする）。"""
+    FEATURE_FLOAT_DTYPE: type = np.float32
+    """連続値・日付・目的変数特徴量（x / date_x / label_x）を numpy 配列に
+    格納する際の浮動小数点精度。data_pipeline.py 内の該当箇所は全てここを参照する。
+    変更する場合は TORCH_FLOAT_DTYPE も対応する精度に合わせて変更すること。"""
+    TORCH_FLOAT_DTYPE: torch.dtype = torch.float32
+    """HeteroData 構築時、x / date_x / label_x / edge_weight を torch.tensor化
+    する際の浮動小数点精度。FEATURE_FLOAT_DTYPE と対応させておくこと。"""
 
     # ------------------------------------------------------------------
     # get_loaders（train/val/test split・近傍サンプリング, data_pipeline.py）
@@ -70,6 +80,30 @@ class graph_params:
     NUM_HOPS: int = 2
     """サンプリングのホップ数（NeighborLoader の num_neighbors / HGTLoader の
     num_samples いずれも、このホップ数分のリストとして渡される）。"""
+    NUM_WORKERS: int = 0
+    """NeighborLoader/HGTLoader のバックグラウンドワーカープロセス数。既定は0
+    （メインプロセスのみでサンプリング、現状維持で最も安全）。
+
+    実測（32GB RAM / Windows / serial_id=9999 の全期間グラフ、batch_size=32,
+    num_hops=2, num_neighbors_per_hop=10, hidden_dim=64 のベースラインモデルで
+    学習ステップを含めて計測）: num_workers=0 で91.8ms/batch、2で36.1ms/batch
+    （約2.5倍）、4で35.3ms/batch（2からの追加効果はほぼ無し）。メモリは
+    Windows の multiprocessing が spawn 方式でも、PyTorch のテンソルIPCが
+    共有メモリ経由で本体の巨大テンソル（グラフ全体、5〜6GB相当）自体は
+    複製しないため、ワーカー1つあたりの純増は2〜3GB程度に収まる
+    （ワーカーごとに再構築されるCSRサンプリング構造・Pythonインタプリタ分と
+    見られる）。32GB環境なら2が費用対効果の頭打ち点で安全マージンも十分。
+
+    ★このデフォルトを0以外に変更しないこと★: Windows の multiprocessing は
+    spawn 方式のため、num_workers>0 で呼び出す側は必ず
+    `if __name__ == "__main__":` 配下で呼ぶ必要がある（さもないと各ワーカー
+    プロセスがモジュールのトップレベルコードを再実行し、呼び出し元の処理が
+    ワーカー内で再度実行されてしまう）。本リポジトリの repo root にある
+    test_temp.py はこのガード無しに get_loaders() をトップレベルで呼んでいる
+    （CLAUDE.md 参照）ため、ここのデフォルトを0以外にすると
+    test_temp.py 実行時に壊れる。0より大きい値は、ガード済みの呼び出し元
+    （train.py の --num-workers 等）が get_loaders() 呼び出し時に明示的に
+    上書きすること。"""
 
     SAMPLER: str = "neighbor"
     """近傍サンプリング方式。'neighbor'（torch_geometric.loader.NeighborLoader、既定）
