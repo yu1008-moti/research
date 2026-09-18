@@ -1,5 +1,5 @@
 from scripts.build_db import *
-from scripts.constant import doc_symbols, tbl_names, msg
+from scripts.datap.db.constant import doc_symbols, tbl_names, msg
 import sys
 
 def main():
