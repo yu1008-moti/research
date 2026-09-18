@@ -14,6 +14,12 @@
 
     --run-name で実行ごとのログディレクトリ名を指定できる（省略時は serial-id とタイムスタンプ
     から自動生成）。--no-tensorboard を渡すとログ出力自体を無効化できる。
+
+実行ログのファイル出力:
+    標準出力に表示される内容（パラメータ一覧・エポックごとの loss/acc・保存先パスなど）は、
+    logs/model_result/<timestamp>_<alias>.log（<alias> は model/<alias>/train.py の <alias>、
+    例: model/baseline/train.py なら baseline）にもそのまま書き出される。
+    --no-file-log を渡すとファイル出力のみ無効化できる（標準出力への表示は変わらない）。
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -130,7 +137,7 @@ def run_epoch(
                     step(batch)
             if device.type == "cuda":
                 torch.cuda.synchronize()
-            print(prof.key_averages().table(sort_by="cuda_time", row_limit=40))
+            logging.info(prof.key_averages().table(sort_by="cuda_time", row_limit=40))
             prof.export_chrome_trace("./trace.json")
         else:
             for batch in loader_iter:
@@ -212,7 +219,29 @@ def main() -> None:
         default=20,
         help="--profile 有効時に計測対象とする先頭バッチ数",
     )
+    parser.add_argument(
+        "--no-file-log",
+        action="store_true",
+        help="logs/model_result/ への実行ログファイル出力を無効化する（標準出力には引き続き表示される）",
+    )
     args = parser.parse_args()
+
+    run_started = datetime.now()
+    alias = Path(__file__).resolve().parent.name  # model/<alias>/train.py の <alias>
+
+    handlers = [logging.StreamHandler(sys.stdout)]
+    log_path = None
+    if not args.no_file_log:
+        log_dir = Path("logs/model_result")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{run_started:%Y%m%d_%H%M%S}_{alias}.log"
+        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+    logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=handlers, force=True)
+
+    if log_path is not None:
+        logging.info(f"[log] writing to {log_path}")
+    logging.info(f"python -m model.{alias}.train {' '.join(sys.argv[1:])}")
+    logging.info(f"[params] {json.dumps(vars(args), ensure_ascii=False, sort_keys=True)}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -246,10 +275,12 @@ def main() -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     structure_path = write_model_structure_md(model, out_dir=Path(__file__).parent)
-    print(f"[model structure] wrote {structure_path}")
+    logging.info(f"[model structure] wrote {structure_path}")
 
     # tensorboard の有無によらず、学習済みモデルのファイル名にも使うため常に決めておく。
-    run_name = args.run_name or f"serial{args.serial_id}_{datetime.now():%Y%m%d_%H%M%S}"
+    # run_started はログファイル名にも使ったタイムスタンプと同一なので、
+    # logs/model_result/<timestamp>_<alias>.log と logs/tensorboard/<run_name>/ を突き合わせやすい。
+    run_name = args.run_name or f"serial{args.serial_id}_{run_started:%Y%m%d_%H%M%S}"
 
     writer = None
     if not args.no_tensorboard:
@@ -260,8 +291,8 @@ def main() -> None:
             f"hidden_dim={args.hidden_dim}, num_layers={args.num_layers}, lr={args.lr}, "
             f"dropout={args.dropout}, batch_size={args.batch_size}, epochs={args.epochs}",
         )
-        print(f"[tensorboard] logging to {run_dir}")
-        print(f"[tensorboard] monitor with: uv run tensorboard --logdir {args.log_dir}")
+        logging.info(f"[tensorboard] logging to {run_dir}")
+        logging.info(f"[tensorboard] monitor with: uv run tensorboard --logdir {args.log_dir}")
 
     global_step = 0
     best_val_acc = 0.0
@@ -284,7 +315,7 @@ def main() -> None:
                 # 計測し終えた時点で即座に打ち切る。残りの学習バッチ・val/test評価・モデル
                 # 保存・学習曲線プロットは診断とは無関係な上、待ち時間を大きく増やすため
                 # 行わない。
-                print(
+                logging.info(
                     f"[profile] profiled first {args.profile_batches} batches "
                     f"(train_loss={train_loss:.4f}, train_acc={train_acc:.4f}); exiting."
                 )
@@ -296,7 +327,7 @@ def main() -> None:
             history["val_loss"].append(val_loss)
             history["train_acc"].append(train_acc)
             history["val_acc"].append(val_acc)
-            print(
+            logging.info(
                 f"[epoch {epoch:03d}] train_loss={train_loss:.4f} train_acc={train_acc:.4f} "
                 f"val_loss={val_loss:.4f} val_acc={val_acc:.4f}"
             )
@@ -307,7 +338,7 @@ def main() -> None:
                 writer.flush()
 
         test_loss, test_acc, _ = run_epoch(model, test_loader, device)
-        print(f"[test] loss={test_loss:.4f} acc={test_acc:.4f} (best_val_acc={best_val_acc:.4f})")
+        logging.info(f"[test] loss={test_loss:.4f} acc={test_acc:.4f} (best_val_acc={best_val_acc:.4f})")
         if writer is not None:
             writer.add_text("test_result", f"loss={test_loss:.4f}, acc={test_acc:.4f}, best_val_acc={best_val_acc:.4f}")
 
@@ -315,7 +346,7 @@ def main() -> None:
         model_dir.mkdir(exist_ok=True)
         model_path = model_dir / f"{run_name}.pt"
         torch.save(model.state_dict(), model_path)
-        print(f"[model] saved to {model_path}")
+        logging.info(f"[model] saved to {model_path}")
 
         # eval.py がチェックポイント単体からモデルを再構築できるよう、state_dict の
         # 復元に必要なハイパーパラメータ（アーキテクチャに関わるもの）をサイドカー
@@ -344,11 +375,11 @@ def main() -> None:
             ),
             encoding="utf-8",
         )
-        print(f"[model] config saved to {config_path}")
+        logging.info(f"[model] config saved to {config_path}")
 
         curves_path = model_dir / f"{run_name}.png"
         plot_training_curves(history, curves_path, title=run_name)
-        print(f"[curves] saved to {curves_path}")
+        logging.info(f"[curves] saved to {curves_path}")
     finally:
         if writer is not None:
             writer.close()

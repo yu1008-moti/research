@@ -37,6 +37,7 @@ REVERSE_RELATIONS: Dict[Tuple[str, str, str], str] = {
 # 値の定義は scripts/datap/graph/cons.py の graph_params に集約されている。
 # --------------------------------------------------------------------------
 MARKET_INDEX_FUTURE_PRODCATS: List[str] = graph_params.MARKET_INDEX_FUTURE_PRODCATS
+TARGET_STOCK_MKT_CODES: List[str] = graph_params.TARGET_STOCK_MKT_CODES
 
 # --------------------------------------------------------------------------
 # カテゴリ変数・日付変数の列定義
@@ -606,7 +607,7 @@ class preprocess:
         prices_df = self.prices_df.copy()
         prices_df["week_id"] = prices_df["week_id"].astype(int)
         target_stocks = prices_df[
-            (prices_df["Mkt"] == "0000") | (prices_df["Mkt"] == "0500")
+            prices_df["Mkt"].isin(TARGET_STOCK_MKT_CODES)
         ][["week_id", "Code"]].drop_duplicates()
 
         merged = target_stocks.merge(
@@ -738,7 +739,7 @@ class preprocess:
             tickers = df["Code"].values
 
             if node_type == "stock":
-                is_target = ((df["Mkt"] == "0000") | (df["Mkt"] == "0500")).astype(bool).tolist()
+                is_target = df["Mkt"].isin(TARGET_STOCK_MKT_CODES).astype(bool).tolist()
             else:
                 is_target = [False] * len(df)
 

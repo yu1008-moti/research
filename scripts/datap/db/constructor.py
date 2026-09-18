@@ -1,5 +1,5 @@
-from base.homo import HomoDBConstructor
-from base.hetero import HeteroDBConstructor
+from scripts.datap.db.base.homo import HomoDBConstructor
+from scripts.datap.db.base.hetero import HeteroDBConstructor
 from typing import List
 
 class prc_DBConstructor(HomoDBConstructor):

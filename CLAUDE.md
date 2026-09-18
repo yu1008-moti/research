@@ -21,9 +21,9 @@ Raw data is never committed — `.gitignore` excludes `**/*.duckdb`, `**/*.db`, 
 This project uses `uv` for dependency/venv management (Python >= 3.11, see `pyproject.toml`; `.venv` already exists).
 
 ```bash
-uv run download_data_main.py           # fetch data from J-Quants API
-uv run build_db_main.py -b <type> [-f|-o]   # build sqlite db from csv, e.g. -b drv -f (futures)
-uv run build_db_main.py -c <type> [-f|-o]   # convert sqlite db -> duckdb, e.g. -c drv -f
+uv run download_data_main.py           # fetch data from J-Quants API (see --help for date-range/rate-limit overrides)
+uv run build_db_main.py build <type> [-f|-o]   # build sqlite db from csv, e.g. build drv -f (futures)
+uv run build_db_main.py convert <type> [-f|-o]   # convert sqlite db -> duckdb, e.g. convert drv -f
 uv run build_graph_main.py             # legacy/older graph construction entrypoint (scripts/construct_graph.py)
 ```
 
@@ -68,9 +68,10 @@ This exists because of a real footgun: the repo root has a `test_temp.py` (not a
 - `notebooks/`, `graph_lab/`, `to_visualize_graph.ipynb` — exploratory/scratch notebooks. `graph_lab/sql/archive/` holds early draft queries superseded by `sql/graph/` — kept for reference only, not used by any code.
 - `claude_output/` — Markdown reports/specs written by Claude Code sessions documenting implementation work (e.g. `graph_spec.md`, `derivative_nodes_edges_implementation.md`, `heterodata_batch_output_explained.md`). When the user asks for a written summary/spec of work done, put it here unless told otherwise.
 - `csv/`, `masks/`, `images/`, `md/` — data/output scratch directories (gitignored contents).
-- `logs/` — split into two subdirectories so plain log files and TensorBoard runs don't clutter each other:
+- `logs/` — split into subdirectories so plain log files, TensorBoard runs, and model training-run logs don't clutter each other:
   - `logs/text/` — plain `*.log` text log files (see the "Log output location" convention below).
   - `logs/tensorboard/` — TensorBoard run directories (event files), written by `model/baseline/train.py`.
+  - `logs/model_result/` — one `*.log` file per `model/<alias>/train.py` run (e.g. `model/baseline/train.py`), mirroring everything printed to stdout during that run (parsed hyperparameters, per-epoch train/val loss & acc, save paths). See the "Log output location" convention below.
 
 ## Conventions and gotchas specific to this repo
 
@@ -79,4 +80,4 @@ This exists because of a real footgun: the repo root has a `test_temp.py` (not a
 - **Never loop per-code with per-row DB inserts** when building edges/features across many stock/option/future codes — this pipeline has hit real ~30-minute performance regressions from that pattern. Prefer vectorized `groupby()/shift()`/pivot-based approaches (see `derivative_corr.py`, `_prev_chain_preprocess` in `data_pipeline.py`) plus a single bulk insert.
 - **`HeteroData` repr**: fields like `x=[258, 12]` in printed `HeteroData`/`NeighborLoader` batches denote tensor *shape*, not value.
 - Node/edge type strings in the DuckDB graph-info tables (`node_type`, `edge_type`) are free-text VARCHAR — adding a new node or edge type is schema-agnostic; extend the Python-side registries (`REVERSE_RELATIONS`, `CATEGORICAL_COLUMNS`, `using_df_list` in `data_pipeline.py`) instead.
-- **Log output location**: any plain-text log file written by a script or ad-hoc run must go under `./logs/text/` (e.g. `logs/text/<script>_<timestamp>.log`), never at the repo root, directly under `./logs/`, or elsewhere. `scripts/api/download_util_async.py` already follows this (`logging.basicConfig(filename=f"logs/text/{...}.log", ...)`) — use it as the pattern for new logging setup. TensorBoard runs are a separate case and go under `./logs/tensorboard/` instead (see `model/baseline/train.py`'s `--log-dir` default). Both subdirectories are gitignored (see Directory map) so this never pollutes commits.
+- **Log output location**: any plain-text log file written by a script or ad-hoc run must go under `./logs/text/` (e.g. `logs/text/<script>_<timestamp>.log`), never at the repo root, directly under `./logs/`, or elsewhere. `scripts/api/download_util_async.py` already follows this (`logging.basicConfig(filename=f"logs/text/{...}.log", ...)`) — use it as the pattern for new logging setup. TensorBoard runs are a separate case and go under `./logs/tensorboard/` instead (see `model/baseline/train.py`'s `--log-dir` default). Per-run model training logs are a third, separate case and go under `./logs/model_result/` instead, one file per run named `<timestamp>_<alias>.log` (see `model/baseline/train.py`'s `logging.basicConfig(handlers=[StreamHandler, FileHandler(...)])` setup, which mirrors everything printed to stdout — including a `[params]` line with all parsed CLI args — into that file; `--no-file-log` disables the file handler only, console output is unaffected). All three subdirectories are gitignored (see Directory map) so this never pollutes commits.

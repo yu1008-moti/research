@@ -20,9 +20,9 @@
 本プロジェクトは依存関係・venv管理に`uv`を使用する（Python >= 3.11、`pyproject.toml`参照。`.venv`は既に存在）。
 
 ```bash
-uv run download_data_main.py           # J-Quants APIからデータ取得
-uv run build_db_main.py -b <type> [-f|-o]   # csvからsqlite dbを構築（例: -b drv -f で先物）
-uv run build_db_main.py -c <type> [-f|-o]   # sqlite db -> duckdb 変換（例: -c drv -f）
+uv run download_data_main.py           # J-Quants APIからデータ取得（日付範囲・レート制限などは --help 参照で上書き可能）
+uv run build_db_main.py build <type> [-f|-o]   # csvからsqlite dbを構築（例: build drv -f で先物）
+uv run build_db_main.py convert <type> [-f|-o]   # sqlite db -> duckdb 変換（例: convert drv -f）
 uv run build_graph_main.py             # 旧・グラフ構築エントリポイント（scripts/construct_graph.py、レガシー）
 ```
 
@@ -67,9 +67,10 @@ pythonpath = ["."]
 - `notebooks/`、`graph_lab/`、`to_visualize_graph.ipynb` — 探索・検証用ノートブック。`graph_lab/sql/archive/`には`sql/graph/`に置き換えられた初期の試作クエリを参考用に残してある（コードからは参照されない）。
 - `claude_output/` — Claude Codeセッションが実装内容をまとめたMarkdownレポート/仕様書の格納先（例: `graph_spec.md`、`derivative_nodes_edges_implementation.md`、`heterodata_batch_output_explained.md`）。作業内容のまとめ・仕様書作成を依頼された場合、特に指示が無ければここに出力する。
 - `csv/`、`masks/`、`images/`、`md/` — データ/出力用の作業ディレクトリ（中身はgitignore対象）。
-- `logs/` — 通常のログファイルとTensorBoardの実行ログが混在して煩雑にならないよう、2つのサブディレクトリに分離してある:
+- `logs/` — 通常のログファイル・TensorBoardの実行ログ・モデル学習実行ログが混在して煩雑にならないよう、サブディレクトリに分離してある:
   - `logs/text/` — 通常の`*.log`テキストログファイル（詳細は後述の「ログ出力先」の注意点を参照）。
   - `logs/tensorboard/` — `model/baseline/train.py`が書き出すTensorBoardの実行ディレクトリ（イベントファイル）。
+  - `logs/model_result/` — `model/<alias>/train.py`（例: `model/baseline/train.py`）の実行1回につき1ファイルの`*.log`。その実行中に標準出力へ表示される内容（パース済みハイパーパラメータ、エポックごとのtrain/val loss・acc、各種保存先パスなど）をそのまま書き出したもの。詳細は後述の「ログ出力先」の注意点を参照。
 
 ## このリポジトリ特有の注意点・落とし穴
 
@@ -78,4 +79,4 @@ pythonpath = ["."]
 - **コードごとにループしながら1行ずつDBにinsertする実装は避ける**: 銘柄・オプション・先物の多数のコードにまたがってエッジ/特徴量を構築する際、このパターンで実際に約30分規模の性能劣化が発生した実績がある。`groupby()/shift()`やpivotベースのベクトル化（`derivative_corr.py`、`data_pipeline.py`の`_prev_chain_preprocess`を参照）＋1回のバルクinsertを優先すること。
 - **`HeteroData`のrepr表記**: 出力された`HeteroData`/`NeighborLoader`バッチの`x=[258, 12]`のような表記は、テンソルの**値ではなく形状（shape）**を表す。
 - DuckDBのグラフ情報テーブル（`node_type`、`edge_type`）はフリーテキストのVARCHARであり、新しいノード/エッジタイプの追加はスキーマに対して非破壊的。新規追加時はDB側ではなく、Python側のレジストリ（`data_pipeline.py`内の`REVERSE_RELATIONS`、`CATEGORICAL_COLUMNS`、`using_df_list`）を拡張すればよい。
-- **ログ出力先**: スクリプトやその場限りの実行で書き出す通常のテキストログファイルは、必ず`./logs/text/`配下に出力すること（例: `logs/text/<script>_<timestamp>.log`）。リポジトリ直下や`./logs/`直下、その他の場所に置いてはいけない。`scripts/api/download_util_async.py`は既にこの規約に従っている（`logging.basicConfig(filename=f"logs/text/{...}.log", ...)`）ので、新しくログ設定を書く際のパターンとして参照すること。TensorBoardの実行ログはこれとは別扱いで、`./logs/tensorboard/`配下に出力する（`model/baseline/train.py`の`--log-dir`のデフォルト値を参照）。どちらのサブディレクトリもgitignore対象（ディレクトリマップ参照）なので、コミットを汚染することはない。
+- **ログ出力先**: スクリプトやその場限りの実行で書き出す通常のテキストログファイルは、必ず`./logs/text/`配下に出力すること（例: `logs/text/<script>_<timestamp>.log`）。リポジトリ直下や`./logs/`直下、その他の場所に置いてはいけない。`scripts/api/download_util_async.py`は既にこの規約に従っている（`logging.basicConfig(filename=f"logs/text/{...}.log", ...)`）ので、新しくログ設定を書く際のパターンとして参照すること。TensorBoardの実行ログはこれとは別扱いで、`./logs/tensorboard/`配下に出力する（`model/baseline/train.py`の`--log-dir`のデフォルト値を参照）。モデル学習の実行ログはさらに別扱い（3つ目のケース）で、`./logs/model_result/`配下に、実行1回につき`<timestamp>_<alias>.log`という1ファイルとして出力する（`model/baseline/train.py`の`logging.basicConfig(handlers=[StreamHandler, FileHandler(...)])`の設定を参照。標準出力に表示される内容——パース済みCLI引数を全て含む`[params]`行も含む——をそのままそのファイルにも書き出す。`--no-file-log`を渡すとファイルハンドラのみ無効化でき、標準出力への表示には影響しない）。3つのサブディレクトリはいずれもgitignore対象（ディレクトリマップ参照）なので、コミットを汚染することはない。
