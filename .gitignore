@@ -15,3 +15,6 @@
 
 # Remain all .gitkeep files in the repository
 !**/*.gitkeep
+
+**/*.json
+**/*.sqlite3
