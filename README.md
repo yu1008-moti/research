@@ -20,6 +20,14 @@ per_sec_rate_limit=5
 # According to your plan, you can change this limit-number
 ```
 
+データを取得後，masks/only_date_mask.npy を用いて，取引可能な日付以外のデータを除去する必要がある．そのためには，
+
+1. test/to_get_base_information.ipynbを実行
+2. test/to_create_masks.ipynb を実行
+3. test/to_extract_valid_data.ipynbを実行
+
+本当はここまでワンセットで実装したいが，時間がないため利用者の理解力がエクセレントであることを祈る．
+
 また，データを取得した後，sqlite3／duckdbへデータを変換可能である．ちなみに私は duckdb がお気に入りである．duckdbへ変換する場合は，以下のコードを実行してほしい．ちなみに，以下のコードは例なので，用途に応じてフラグや引数を変える必要がある．今回は，先物データを sqlite3 形式で保存した後，続けて duckdb 形式に保存している．constant.py ファイルの設定を変更すると１行目だけで済むのだが，変更は推奨しない．
 
 ```bash
@@ -28,6 +36,10 @@ uv run build_data_main.py -c drv -f
 ```
 
 これで，先物データを duckdb で扱えるようになる．<br>
+
+```sql
+
+```
 
 ## 使ってみたい・使えそうな技術・知見
 
