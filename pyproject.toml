@@ -42,7 +42,9 @@ dependencies = [
     "narwhals==2.26.0",
     "nest-asyncio==1.6.0",
     "networkx==3.6.1",
+    "ninja>=1.13.2",
     "numpy==2.4.6",
+    "packaging>=26.3",
     "pandas==3.0.5",
     "pandas-stubs==3.0.5.260730",
     "parso==0.8.6",
@@ -81,7 +83,7 @@ dependencies = [
     "wcwidth==0.6.0",
     "wrapt==2.4.1",
     "xxhash==3.8.1",
-    "yarl==1.23.0",
+    "yarl==1.23.0"
 ]
 
 [[tool.uv.index]]
@@ -116,3 +118,6 @@ testpaths = ["tests"]
 # tests/ 配下には __init__.py を置かない方針のため、scripts.* を絶対importできるよう
 # リポジトリルートを sys.path に追加する。
 pythonpath = ["."]
+
+[tool.uv]
+no-build-isolation = true

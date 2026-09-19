@@ -72,15 +72,15 @@ uv run build_db_main.py convert drv -f
 
 | パス | サマリ |
 |---|---|
-| [`md/Node_Code_Rule.md`](md/Node_Code_Rule.md) | ノードを一意に決定するNODE_IDルールの試案（未完成・検討中）。 |
-| [`md/RE_fins_summary.md`](md/RE_fins_summary.md) | 決算情報（`fin_sum`）の特徴量処理方針まとめ。メタ特徴量・配当情報・決算情報の運用方法と、`fin_summary.sql`のマクロ定義・CTEパイプラインの詳細解説。 |
-| [`md/drv_ftr_study.md`](md/drv_ftr_study.md) | 先物データ（`drv_ftr`）調査。CodeのProdCat体系整理と`SQRemainingDays`欠損補完等の特徴量操作をまとめる。 |
-| [`md/drv_opt_study.md`](md/drv_opt_study.md) | オプションデータ（`drv_opt`）調査。`IR`/`SQD`等の不使用列の根拠、`Theo`/`Settle`等の共線性検討とそれに基づく`DeviationRate`/`Moneyness`等の特徴量設計。 |
-| [`md/eqt_ivt_study.md`](md/eqt_ivt_study.md) | 投資部門別データ（`eqt_inv`）調査。`Section`/`Mkt`対応表、投資家区分別の売買比率・ウェイト特徴量のSQL設計。 |
-| [`md/eqt_main_study.md`](md/eqt_main_study.md) | 指数データ利用方針。`Mkt`カテゴリ・S33/S17業種カテゴリの対応表整理と、`eqt_main_tmp`構築SQLの解説（市場再編履歴の反映含む）。 |
-| [`md/fins_summary.md`](md/fins_summary.md) | 決算情報（fins_summary）の開示書類種別ごとの使用可否判定、Div系特徴量の欠損率・組み合わせパターンの整理。 |
-| [`md/how_build_db.md`](md/how_build_db.md) | DB構築のTODO・進捗管理。各データタイプの構築済み/無視項目とその理由の一覧。 |
-| [`md/how_to_forward_fill.md`](md/how_to_forward_fill.md) | 株価欠損データの前方補完ルールとBefore/After例（架空データ使用）。 |
+| [`md/feats/Node_Code_Rule.md`](md/feats/Node_Code_Rule.md) | ノードを一意に決定するNODE_IDルールの試案（未完成・検討中）。 |
+| [`md/feats/RE_fins_summary.md`](md/feats/RE_fins_summary.md) | 決算情報（`fin_sum`）の特徴量処理方針まとめ。メタ特徴量・配当情報・決算情報の運用方法と、`fin_summary.sql`のマクロ定義・CTEパイプラインの詳細解説。 |
+| [`md/feats/drv_ftr_study.md`](md/feats/drv_ftr_study.md) | 先物データ（`drv_ftr`）調査。CodeのProdCat体系整理と`SQRemainingDays`欠損補完等の特徴量操作をまとめる。 |
+| [`md/feats/drv_opt_study.md`](md/feats/drv_opt_study.md) | オプションデータ（`drv_opt`）調査。`IR`/`SQD`等の不使用列の根拠、`Theo`/`Settle`等の共線性検討とそれに基づく`DeviationRate`/`Moneyness`等の特徴量設計。 |
+| [`md/feats/eqt_ivt_study.md`](md/feats/eqt_ivt_study.md) | 投資部門別データ（`eqt_inv`）調査。`Section`/`Mkt`対応表、投資家区分別の売買比率・ウェイト特徴量のSQL設計。 |
+| [`md/feats/eqt_main_study.md`](md/feats/eqt_main_study.md) | 指数データ利用方針。`Mkt`カテゴリ・S33/S17業種カテゴリの対応表整理と、`eqt_main_tmp`構築SQLの解説（市場再編履歴の反映含む）。 |
+| [`md/feats/fins_summary.md`](md/feats/fins_summary.md) | 決算情報（fins_summary）の開示書類種別ごとの使用可否判定、Div系特徴量の欠損率・組み合わせパターンの整理。 |
+| [`md/feats/how_build_db.md`](md/feats/how_build_db.md) | DB構築のTODO・進捗管理。各データタイプの構築済み/無視項目とその理由の一覧。 |
+| [`md/feats/how_to_forward_fill.md`](md/feats/how_to_forward_fill.md) | 株価欠損データの前方補完ルールとBefore/After例（架空データ使用）。 |
 
 ### モデル関連
 
