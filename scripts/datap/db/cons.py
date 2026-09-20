@@ -312,7 +312,7 @@ class bld_sql(sqlbase):
 
     @property
     def is_cvt(self):
-        return False
-        # return True # RECOMENDATION: Set to False to prevent conversion during database building.
+        # return False
+        return True # RECOMENDATION: Set to False to prevent conversion during database building.
 
 
