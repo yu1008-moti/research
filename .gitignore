@@ -9,9 +9,24 @@
 **/*.pkl
 **/*.csv
 **/*.npy
+**/*.pt
+**/*.json
+**/*.*.wal
 
 # Ignore all Jupyter Notebook files
 **/*.ipynb
 
 # Remain all .gitkeep files in the repository
 !**/*.gitkeep
+
+# Ignore python cache files
+**/__pycache__/
+*.pyc
+
+# Ignore TensorBoard run logs (event files aren't matched by *.log above)
+logs/tensorboard/*
+!logs/tensorboard/.gitkeep
+
+# Ignore per-run training-curve images saved next to model checkpoints
+# (repo-wide *.png isn't ignored since images/ etc. intentionally commit some PNGs)
+model/*/models/*.png
