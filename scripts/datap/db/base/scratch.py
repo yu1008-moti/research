@@ -2,7 +2,7 @@ import pandas as pd
 from abc import ABC, abstractmethod
 from scripts.datap.db.cons import paths, msg, bld_sql
 import sqlite3
-from base.cvt import duckDBConverter as dkdbc
+from scripts.datap.db.base.cvt import duckDBConverter as dkdbc
 from typing import List
 
 class FromScratchDBConstructor(ABC):

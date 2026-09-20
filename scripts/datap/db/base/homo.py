@@ -1,6 +1,6 @@
 import pandas as pd
 from abc import ABC, abstractmethod
-from scratch import FromScratchDBConstructor
+from scripts.datap.db.base.scratch import FromScratchDBConstructor
 from pathlib import Path
 from typing import List, Iterator, Tuple
 

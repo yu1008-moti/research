@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 from abc import ABC, abstractmethod
-from scratch import FromScratchDBConstructor
+from scripts.datap.db.base.scratch import FromScratchDBConstructor
 from typing import List, Iterator
 from pathlib import Path
 
