@@ -20,8 +20,8 @@
 !**/*.gitkeep
 
 # Ignore python cache files
-# **/__pycache__/
-# *.pyc
+**/__pycache__/
+*.pyc
 
 # Ignore TensorBoard run logs (event files aren't matched by *.log above)
 logs/tensorboard/*
