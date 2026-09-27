@@ -52,7 +52,12 @@ pythonpath = ["."]
 - `scripts/download.py`、`scripts/build_db.py`、`scripts/construct_graph.py` — ルートの`*_main.py`から呼ばれるトップレベルの処理。
 - `scripts/datap/db/` — CSV/API → SQLite → DuckDB の構築処理（`constructor.py`、`cons.py`、`base/{cvt,hetero,homo,scratch}.py`）。
 - `scripts/datap/graph/` — **現在アクティブに開発しているグラフ構築パイプライン**（PyG `HeteroData`）。作業のほとんどはここで行われる。主なファイル:
-  - `data_pipeline.py` — ノード/エッジ登録（`preprocess`クラス）、`HeteroData`組み立て（`graphDataSet`）、`NeighborLoader`設定（`get_loaders`）。
+  - `data_pipeline.py` — 後方互換のための薄いファサード: 以下5ファイルの公開シンボルを従来通り`data_pipeline.*`という名前・importパスで再エクスポートするだけで、独自ロジックは持たない。既存の`from scripts.datap.graph.data_pipeline import ...`はそのまま動作し続ける。新規コードは以下の各ファイルから直接importすること。
+  - `feature_encoding.py` — カテゴリ/日付/目的変数の列レジストリ（`CATEGORICAL_COLUMNS`、`DATE_COLUMNS`、`LABEL_COLUMNS`）とvocabの構築・保存・読込（`build_category_vocab`、`get_vocab_sizes`等）。
+  - `graph_io.py` — DBとHeteroDataの境界処理: `graph_node.feats`のJSONをパースし、文字列の`node_id`を整数インデックスへ変換する（`fetch_node_table`、`fetch_edge_index`、`map_edge_ids_to_idx`）。
+  - `preprocess.py` — ノード/エッジ登録（`preprocess`クラス）: 全エッジタイプの生成と、ノード/feats行の`graph_node`/`graph_edge`テーブルへの書き込みを担当。
+  - `dataset.py` — `HeteroData`組み立て（`graphDataSet`、PyGの`InMemoryDataset`）。`REVERSE_RELATIONS`もここに置く。
+  - `loaders.py` — `NeighborLoader`/`HGTLoader`設定（`get_loaders`）と、手動動作確認用の`mock_code`。
   - `capm_corr.py` — CAPM残差のローリング相関による`stock__corr__stock`エッジ（52週窓。市場ポートフォリオという比較対象が必要なため株式限定）。
   - `derivative_corr.py` — 同一ピアグループ（同一`UndSSO`/`ProdCat`）内の生リターンのローリング相関による`option__corr__option`/`future__corr__future`エッジ（デリバティブは短命かつ市場ポートフォリオに相当するものが無いため、株式より短い窓）。
   - `cons.py` — `rel_sql`（DB/SQLファイルパス。`sql/graph/`配下を指す。ハイパーパラメータではない）と`graph_params`（**ユーザが調整すべき全ハイパーパラメータの集約先**: 相関の窓・閾値、vocabディレクトリ、分割比率、`NeighborLoader`のバッチサイズ・ホップ数等。このパイプライン内の全関数はデフォルトで`graph_params.*`を参照し、キーワード引数で個別上書き可能）。
@@ -76,7 +81,7 @@ pythonpath = ["."]
 
 - **`graph_v2` → `graph` への改称の経緯**: グラフパイプラインのディレクトリは以前`scripts/datap/graph_v2/`という名前だった。改称時に取りこぼした`graph_v2`参照（importパス、キャッシュファイルパス等）が実際にバグを引き起こしている（キャッシュの静かなミス、`ModuleNotFoundError`等）。どこかで`graph_v2`という文字列を見かけたら、意図的なものではなく改称の取りこぼしバグである可能性が高い。
 - **DuckDBの一括insert規約**: このパイプラインの`insert.*`ヘルパーは`INSERT INTO table (SELECT * FROM data_list)`という形で、**呼び出し元Pythonフレーム内にある`data_list`という名前のローカル変数**をDuckDBが直接スキャンする仕組みに依存している。ドキュメント化されていないが動作上必須の規約であり、insert呼び出し箇所でこの変数名を変更しないこと。
-- **コードごとにループしながら1行ずつDBにinsertする実装は避ける**: 銘柄・オプション・先物の多数のコードにまたがってエッジ/特徴量を構築する際、このパターンで実際に約30分規模の性能劣化が発生した実績がある。`groupby()/shift()`やpivotベースのベクトル化（`derivative_corr.py`、`data_pipeline.py`の`_prev_chain_preprocess`を参照）＋1回のバルクinsertを優先すること。
+- **コードごとにループしながら1行ずつDBにinsertする実装は避ける**: 銘柄・オプション・先物の多数のコードにまたがってエッジ/特徴量を構築する際、このパターンで実際に約30分規模の性能劣化が発生した実績がある。`groupby()/shift()`やpivotベースのベクトル化（`derivative_corr.py`、`preprocess.py`の`_prev_chain_preprocess`を参照）＋1回のバルクinsertを優先すること。
 - **`HeteroData`のrepr表記**: 出力された`HeteroData`/`NeighborLoader`バッチの`x=[258, 12]`のような表記は、テンソルの**値ではなく形状（shape）**を表す。
-- DuckDBのグラフ情報テーブル（`node_type`、`edge_type`）はフリーテキストのVARCHARであり、新しいノード/エッジタイプの追加はスキーマに対して非破壊的。新規追加時はDB側ではなく、Python側のレジストリ（`data_pipeline.py`内の`REVERSE_RELATIONS`、`CATEGORICAL_COLUMNS`、`using_df_list`）を拡張すればよい。
+- DuckDBのグラフ情報テーブル（`node_type`、`edge_type`）はフリーテキストのVARCHARであり、新しいノード/エッジタイプの追加はスキーマに対して非破壊的。新規追加時はDB側ではなく、Python側のレジストリ（`dataset.py`内の`REVERSE_RELATIONS`、`feature_encoding.py`内の`CATEGORICAL_COLUMNS`、`using_df_list`——`preprocess.py`の複数メソッド内で繰り返されるローカル変数）を拡張すればよい。
 - **ログ出力先**: スクリプトやその場限りの実行で書き出す通常のテキストログファイルは、必ず`./logs/text/`配下に出力すること（例: `logs/text/<script>_<timestamp>.log`）。リポジトリ直下や`./logs/`直下、その他の場所に置いてはいけない。`scripts/api/download_util_async.py`は既にこの規約に従っている（`logging.basicConfig(filename=f"logs/text/{...}.log", ...)`）ので、新しくログ設定を書く際のパターンとして参照すること。TensorBoardの実行ログはこれとは別扱いで、`./logs/tensorboard/`配下に出力する（`model/baseline/train.py`の`--log-dir`のデフォルト値を参照）。モデル学習の実行ログはさらに別扱い（3つ目のケース）で、`./logs/model_result/`配下に、実行1回につき`<timestamp>_<alias>.log`という1ファイルとして出力する（`model/baseline/train.py`の`logging.basicConfig(handlers=[StreamHandler, FileHandler(...)])`の設定を参照。標準出力に表示される内容——パース済みCLI引数を全て含む`[params]`行も含む——をそのままそのファイルにも書き出す。`--no-file-log`を渡すとファイルハンドラのみ無効化でき、標準出力への表示には影響しない）。3つのサブディレクトリはいずれもgitignore対象（ディレクトリマップ参照）なので、コミットを汚染することはない。

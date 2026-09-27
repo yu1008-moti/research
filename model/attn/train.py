@@ -124,8 +124,8 @@ def run_epoch(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--serial-id", type=int, default=9999)
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--serial-id", type=int, default=20260917)
+    parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--lr", type=float, default=1e-3)

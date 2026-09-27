@@ -26,25 +26,30 @@ class HGTConv(MessagePassing):
         self,
         hidden_dim: int,
         edge_types: List[Edgetype],
+        num_types: int,
         head_num: int,
     ) -> None:
-        super().__init__()
+        super().__init__(aggr="add")
+        self.num_types = num_types
 
         assert hidden_dim % head_num == 0
-        ith_head_dim = hidden_dim // head_num
+        hidden_dim = hidden_dim // head_num
 
-        self.k_linear = nn.ModuleList()
-        self.q_linear = nn.ModuleList()
-        self.v_linear = nn.ModuleList()
-        self.a_linear = nn.ModuleList()
+        self.k_linearList = nn.ModuleList()
+        self.q_linearList = nn.ModuleList()
+        self.v_linearList = nn.ModuleList()
+        self.attn_weights = nn.ModuleList()
 
-        for _ in range(len(edge_types)):
-            self.k_linear.append(nn.Linear(hidden_dim, ith_head_dim))
-            self.q_linear.append(nn.Linear(hidden_dim, ith_head_dim))
-            self.v_linear.append(nn.Linear(hidden_dim, ith_head_dim))
-            self.a_linear.append(nn.Linear(ith_head_dim, hidden_dim))
-
-        self.relation_pri = nn.Parameter(torch.ones(len(edge_types), head_num))
+        for i in range(len(edge_types)):
+            self.k_linearList.append(nn.Linear(hidden_dim, hidden_dim))
+            self.q_linearList.append(nn.Linear(hidden_dim, hidden_dim))
+            self.v_linearList.append(nn.Linear(hidden_dim, hidden_dim))
 
     def forward(self, edge_index, ) -> None:
         self.propagate(edge_index=edge_index)
+
+    def message(self):
+        pass
+
+    def update(self, aggr_out):
+        pass

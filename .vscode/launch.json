@@ -11,6 +11,14 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Python デバッガー: model.baseline.train",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "model.baseline.train",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
         }
     ]
 }

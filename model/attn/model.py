@@ -190,7 +190,11 @@ class AttnHeteroGNN(nn.Module):
     def forward(self, batch: HeteroData) -> torch.Tensor:
         """`batch` は NeighborLoader が返す HeteroData ミニバッチ。stock 全ノードのロジットを返す。"""
         h_dict = {
-            node_type: encoder(batch[node_type].x, batch[node_type].cat_x, batch[node_type].date_x)
+            node_type: encoder(
+                batch[node_type].x, 
+                batch[node_type].cat_x, 
+                batch[node_type].date_x
+            )
             for node_type, encoder in self.encoders.items()
         }
         edge_index_dict  = {et: batch[et].edge_index  for et in batch.edge_types}
