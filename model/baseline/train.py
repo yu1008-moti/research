@@ -39,6 +39,7 @@ import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.data import HeteroData
 
+from model.common.early_stopping import EarlyStopping
 from model.common.visualize import plot_training_curves, write_model_structure_md
 from scripts.datap.graph.data_pipeline import (
     CATEGORICAL_COLUMNS,
@@ -197,6 +198,22 @@ def main() -> None:
             "get_loaders(num_workers>0) を呼ぶ場合は同様のガードが必須。"
         ),
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=0,
+        help=(
+            "early stopping の待機エポック数。val_loss が --min-delta 以上改善しないエポックが"
+            "連続してこの回数に達したら学習を打ち切り、ベストエポックの重みでテスト評価・保存する。"
+            "0（既定）で無効（--epochs まで回す）。"
+        ),
+    )
+    parser.add_argument(
+        "--min-delta",
+        type=float,
+        default=0.0,
+        help="early stopping で「改善」とみなす val_loss の最小減少幅",
+    )
     parser.add_argument("--log-dir", type=str, default="logs/tensorboard", help="TensorBoard ログの出力先ルート")
     parser.add_argument(
         "--run-name",
@@ -296,7 +313,9 @@ def main() -> None:
 
     global_step = 0
     best_val_acc = 0.0
-    history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
+    early_stopper = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
+    epochs_run = 0
+    history ={"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
     try:
         for epoch in range(1, args.epochs + 1):
             train_loss, train_acc, global_step = run_epoch(
@@ -337,6 +356,18 @@ def main() -> None:
                 writer.add_scalars("epoch/acc", {"train": train_acc, "val": val_acc}, epoch)
                 writer.flush()
 
+            epochs_run = epoch
+            if early_stopper.step(val_loss, model, epoch):
+                logging.info(
+                    f"[early stopping] val_loss did not improve for {args.patience} epochs "
+                    f"(best epoch={early_stopper.best_epoch}, best val_loss={early_stopper.best_loss:.4f}); stopping."
+                )
+                break
+
+        # ベストエポックの重みに戻してからテスト評価・保存する。
+        early_stopper.restore(model)
+        logging.info(f"[best] restored weights from epoch {early_stopper.best_epoch} (val_loss={early_stopper.best_loss:.4f})")
+
         test_loss, test_acc, _ = run_epoch(model, test_loader, device)
         logging.info(f"[test] loss={test_loss:.4f} acc={test_acc:.4f} (best_val_acc={best_val_acc:.4f})")
         if writer is not None:
@@ -365,6 +396,10 @@ def main() -> None:
                     "num_neighbors_per_hop": args.num_neighbors_per_hop,
                     "num_hops": args.num_hops,
                     "epochs": args.epochs,
+                    "epochs_run": epochs_run,
+                    "patience": args.patience,
+                    "min_delta": args.min_delta,
+                    "best_epoch": early_stopper.best_epoch,
                     "lr": args.lr,
                     "best_val_acc": best_val_acc,
                     "test_loss": test_loss,
