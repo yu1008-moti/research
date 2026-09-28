@@ -57,6 +57,7 @@ class NodeEncoder(nn.Module):
             self.date_norm = None
             self.date_lin = None
 
+
     def forward(self, x: torch.Tensor, cat_x: torch.Tensor, date_x: torch.Tensor) -> torch.Tensor:
         # 一部の列（例: stock の r_i は上場直後の週で前週終値が存在せず NaN）は欠損しうる。
         # LayerNorm は1つでも NaN が混じると行全体が NaN に伝播するため、事前に 0 埋めする。

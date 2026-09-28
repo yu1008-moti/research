@@ -143,7 +143,8 @@ class graphDataSet(InMemoryDataset):
             data[node_type].cat_x = torch.tensor(node_table["cat_x"], dtype=torch.long)   # (N, カテゴリ列数)
             data[node_type].date_x = torch.tensor(node_table["date_x"], dtype=TORCH_FLOAT_DTYPE)  # (N, 日付列数)
             # 目的変数（例: stock の y / y_valid）。x とは別テンソルとして持たせる
-            # （LABEL_COLUMNS[node_type] が空なら label_x は (N, 0) で何も生えない）
+            # 現状，LABEL_COLUMNS は stock のみ登録されているため，stock 以外のノードタイプでは
+            # label_x は (N, 0) で何も生えない。
             for label_idx, label_col in enumerate(LABEL_COLUMNS.get(node_type, [])):
                 data[node_type][label_col] = torch.tensor(
                     node_table["label_x"][:, label_idx], dtype=TORCH_FLOAT_DTYPE
@@ -154,6 +155,7 @@ class graphDataSet(InMemoryDataset):
             os.makedirs(self.processed_dir, exist_ok=True)
             np.save(self._node_str_id_path(node_type), node_table["node_str_id"])
 
+            # {"node_type": {idx: node_id, ...}} の辞書を作る
             node_id_to_idx[node_type] = build_node_id_to_idx(node_table["node_str_id"])
 
         # 2. エッジ側（まだ文字列 node_id のまま）を取得
