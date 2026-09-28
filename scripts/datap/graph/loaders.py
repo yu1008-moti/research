@@ -159,14 +159,3 @@ def get_loaders(
     test_loader = _make_loader(test_mask, shuffle=False)
 
     return train_loader, val_loader, test_loader
-
-
-def mock_code(serial_id: int = 1):
-    train_loader, val_loader, test_loader = get_loaders(serial_id=serial_id, split_1_per=0.7, split_2_per=0.85, batch_size=32)
-
-    for batch in train_loader:
-        print(batch)
-    for batch in val_loader:
-        print(batch)
-    for batch in test_loader:
-        print(batch)

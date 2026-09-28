@@ -47,7 +47,7 @@ from scripts.datap.graph.graph_io import (
     map_edge_ids_to_idx,
     parse_feats_json,
 )
-from scripts.datap.graph.loaders import get_loaders, mock_code
+from scripts.datap.graph.loaders import get_loaders
 from scripts.datap.graph.preprocess import (
     MARKET_INDEX_FUTURE_PRODCATS,
     TARGET_STOCK_MKT_CODES,
@@ -79,7 +79,6 @@ __all__ = [
     "map_edge_ids_to_idx",
     "parse_feats_json",
     "get_loaders",
-    "mock_code",
     "MARKET_INDEX_FUTURE_PRODCATS",
     "TARGET_STOCK_MKT_CODES",
     "preprocess",
