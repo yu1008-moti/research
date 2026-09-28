@@ -47,6 +47,7 @@ dependencies = [
     "packaging>=26.3",
     "pandas==3.0.5",
     "pandas-stubs==3.0.5.260730",
+    "pandera>=0.33.1",
     "parso==0.8.6",
     "patsy==1.0.2",
     "pillow==12.2.0",
@@ -83,7 +84,7 @@ dependencies = [
     "wcwidth==0.6.0",
     "wrapt==2.4.1",
     "xxhash==3.8.1",
-    "yarl==1.23.0"
+    "yarl==1.23.0",
 ]
 
 [[tool.uv.index]]

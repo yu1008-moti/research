@@ -115,7 +115,6 @@ SELECT
 FROM weekly_eqt w
 JOIN join_topix_callrate j
 ON w.week_id = j.week_id
--- WHERE $YEAR_START < w.week_id AND w.week_id < $YEAR_END
 ORDER BY week_id, Code
 )
 
@@ -123,5 +122,5 @@ SELECT *
 FROM res
 WHERE week_id > $START_WEEK_ID AND week_id < $END_WEEK_ID
 -- Ideal params
---  $YEAR_START = 200819
---  $YEAR_END = 202616
+--  START_WEEK_ID = 200819
+--  END_WEEK_ID = 202616
