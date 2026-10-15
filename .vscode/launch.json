@@ -6,19 +6,18 @@
     "configurations": [
         
         {
-            "name": "Python デバッガー: 現在のファイル",
+            "name": "今のファイル",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
         },
         {
-            "name": "Python デバッガー: model.baseline.train",
+            "name": "loader.py",
             "type": "debugpy",
             "request": "launch",
-            "module": "model.baseline.train",
-            "cwd": "${workspaceFolder}",
+            "program": "scripts\\datap\\graph\\loader.py",
             "console": "integratedTerminal"
-        }
+        },
     ]
 }

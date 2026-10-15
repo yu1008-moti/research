@@ -7,9 +7,13 @@ day2week AS (
   SELECT
     yearweek(TradeDate) AS week_id,
     first(Code) AS Code,
+    case when cast(substring(first(Code), 2, 1) as integer) % 2 = 0 then 1 else 0 end as isPUT,
+    case when cast(substring(first(Code), 2, 1) as integer) < 3     then 1 else 0 end as isFUTURE,
     last(ProdCat) AS ProdCat,
-    CASE WHEN last(UndSSO) = '-' THEN NULL ELSE last(UndSSO) || '0' END AS UndSSO,
+    CASE WHEN last(UndSSO) = '-' THEN '00000' ELSE last(UndSSO) || '0' END AS UndSSO,
     last(CM) AS CM,
+    SUBSTRING(last(CM), 1, 4) AS CM_year,
+    SUBSTRING(last(CM), 6, 2) AS CM_month,
     -- log OHLCV（株式側の AdjO/AdjH/AdjL/AdjC/AdjVo 命名規則に合わせる）
     log(first(O+1)) AS AdjO,
     log(max(H+1)) AS AdjH,
@@ -29,7 +33,29 @@ day2week AS (
   GROUP BY yearweek(TradeDate), Code
 )
 
-SELECT *
+SELECT 
+  week_id,
+  Code,
+  ProdCat,
+  UndSSO,
+  isPUT,
+  isFUTURE,
+  CM_year,
+  CM_month,
+  AdjO,
+  AdjH,
+  AdjL,
+  AdjC,
+  AdjVo,
+  AdjVa,
+  AdjOI,
+  Moneyness,
+  DeviationRate,
+  SQRemainingDays,
+  IV,
+  NULL_TYPE_1,
+  NULL_TYPE_2
 FROM day2week
-WHERE week_id > $START_WEEK_ID AND week_id < $END_WEEK_ID
+--WHERE week_id > 200819 AND week_id < 202616
+where isFUTURE = 1
 ORDER BY week_id, Code
