@@ -1,6 +1,6 @@
 import torch
 from torch_geometric.data import HeteroData
-from torch_geometric.data import InMemoryDataset
+from torch_geometric.data import InMemoryDataset, Dataset
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -9,6 +9,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 import scripts.datap.graph.stock_corr_stock  as stock_corr_stock
 import scripts.datap.graph.const as c
+from scripts.datap.graph.sampling import HGTsampling
 import os
 
 
@@ -73,7 +74,7 @@ def train_valid_eval_split(data_list:List) -> Tuple[List[HeteroData], List[Heter
 
 
 
-class MarketDataset(InMemoryDataset):
+class MarketDataset(Dataset):
     def __init__(
             self, 
             root,
@@ -81,7 +82,7 @@ class MarketDataset(InMemoryDataset):
         
         print(f'device: {torch.device("cuda" if torch.cuda.is_available() else "cpu")}')
         super().__init__(root)
-        self.load(self.processed_paths[c.PROCESSED_MARKET_DATA_INDEX], HeteroData)
+        # self.load(self.processed_paths[c.PROCESSED_MARKET_DATA_INDEX], HeteroData)
 
     @property
     def raw_dir(self):
@@ -216,8 +217,8 @@ class MarketDataset(InMemoryDataset):
                 data[node1_type, edge_type, node2_type].codeIDs_j    = torch.as_tensor(codeIDs_j[idx]    , dtype=c.TORCH_INT32).cpu()
 
             # TODO: insert HGT-sampling here
-
-
+            output_node_set = returns.loc[returns['dateID'] == dateID, 'codeID'].to_list()
+            HGTsampling(data, output_node_set, L=2, n=20)
 
             for node_type, node_info in entire_nodes.items():
                 codeID = node_info['codeID']
@@ -275,4 +276,4 @@ class MarketDataset(InMemoryDataset):
             print(f'\rdateID: {dateID},  {i}/{len(dateIDs)}', end='')
         print("\nFinished processing all dateIDs.")
 
-        self.save(data_list, self.processed_paths[c.PROCESSED_MARKET_DATA_INDEX])
+        # self.save(data_list, self.processed_paths[c.PROCESSED_MARKET_DATA_INDEX])

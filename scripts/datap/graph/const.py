@@ -2,7 +2,7 @@ import torch
 from pathlib import Path
 
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 NUM_LABELS = 3  # Assuming 3 classes for classification
 
@@ -14,14 +14,14 @@ EVAL_UP_LIMIT_DATEID = MAX_DATEID # EVAL is 6083 to MAX_DATEID (6554)
 PARQUET_DISR = Path("db/parquet")
 
 # address: 0 is center (*_i), 1 is neighbor (*_j)
-HETERO_EDGE_DICT: Dict[str, List[str]] = {
-    "corr"          : ['stock' , 'stock'],
-    "made_up_Mkt"   : ['stock' , 'mktIdx'],
-    "made_up_topix" : ['stock' , 'mktIdx'],
-    "made_up_s33"   : ['stock' , 'mktIdx'],
-    "made_up_s17"   : ['stock' , 'mktIdx'],
-    "recent_report" : ['stock' , 'statement'],
-    "index_future"  : ['mktIdx', 'future']
+HETERO_EDGE_DICT: Dict[str, Tuple[str, str]] = {
+    "corr"          : ('stock' , 'stock'),
+    "made_up_Mkt"   : ('stock' , 'mktIdx'),
+    "made_up_topix" : ('stock' , 'mktIdx'),
+    "made_up_s33"   : ('stock' , 'mktIdx'),
+    "made_up_s17"   : ('stock' , 'mktIdx'),
+    "recent_report" : ('stock' , 'statement'),
+    "index_future"  : ('mktIdx', 'future')
 }
 
 HETERO_NODE_TYPES: List[str] = [
@@ -46,14 +46,6 @@ HETERO_NODE_ID: Dict[str, int] = {
     "statement"    : 1,
     "mktIdx"       : 2,
     "future"       : 3 
-}
-
-# change numbers of each type node by TRY&ERROR !!
-SAMPLE_RULES: Dict[str, List[int]] = {
-    "stock"     : [20, 20, 20, 20],
-    "statement" : [20, 20, 20, 20],
-    "mktIdx"    : [20, 20, 20, 20],
-    "future"    : [20, 20, 20, 20]
 }
 
 # <duckdb side processing>
