@@ -19,5 +19,31 @@
             "program": "scripts\\datap\\graph\\loader.py",
             "console": "integratedTerminal"
         },
+        {
+            "name": "model.py",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "model.model",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "train.py",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "model.train",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "args": [
+                "--in-hid"    , "128", 
+                "--out-hid"   , "128", 
+                "--num-head"  , "4", 
+                "--dropout"   , "0.1", 
+                "--epochs"    , "1",
+                "--num-layer" , "2", 
+                "--lr"        , "0.001", ]
+        },
     ]
 }
