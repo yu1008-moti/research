@@ -19,14 +19,15 @@ __all__ = ['MarketDataset', 'train_valid_eval_split']
 def get_parquet_path(name: str) -> Path:
     return c.PARQUET_DISR / f"{name}.parquet"
 
-def get_occurence_mask(df: pd.DataFrame, col: str, dateID: int, num_iccur_window_size: int) -> np.ndarray:
-    df_t = df.copy().loc[df['nodeType']==col]
-    df_t = df_t.sort_values(by=['dateID', 'codeID'])
-    df_t = df_t[df_t['dateID'] <= dateID]
-    df_t['current_num_occur'] = df_t.groupby('codeID').max()['num_occur']
-    mask = df_t['current_num_occur'] < num_iccur_window_size
-    assert isinstance(mask.values, np.ndarray), f"Expected mask to be a numpy array, got {type(mask.values)}"
-    return mask.values
+def get_occurence_mask(df: pd.DataFrame, col: str, dateID: int, num_iccur_window_size: int) -> pd.Series:
+    df_o = df[df['nodeType']==col].sort_values(by=['dateID', 'codeID']).copy()
+    df_o['current_num_occur'] = df_o['codeID'].map((
+        df[(df['nodeType']==col) & (df['dateID'] <= dateID)].sort_values(by=['dateID', 'codeID'])
+    ).groupby('codeID')['num_occur'].max())
+    mask = df_o['current_num_occur'] < num_iccur_window_size
+    assert isinstance(mask, pd.Series), f"Expected mask to be a pandas Series, got {type(mask)}"
+    del df_o  # Free memory
+    return mask
     
 def set_labels(return_df: pd.DataFrame) -> None:
 
@@ -45,14 +46,12 @@ def set_labels(return_df: pd.DataFrame) -> None:
     return_df['pos'] = (return_df['return'] > high_threshold).astype(int)
     return_df['neu'] = ((return_df['return'] >= low_threshold) & (return_df['return'] <= high_threshold)).astype(int)
 
-    print("====================== REPORT: Labeling of returns based on thresholds ======================")
+    print("\n====================== REPORT: Labeling of returns based on thresholds ======================")
     print(f"Number of samples used to define thresholds: {num_define_labels_samples}")
     print(f"Label thresholds   : low={low_threshold}, high={high_threshold}")
     print(f"Label distribution : neg={return_df['neg'].sum()}, pos={return_df['pos'].sum()}, neu={return_df['neu'].sum()}")
     print(f'(%) neg : neu : pos = {return_df["neg"].sum()/len(return_df):.5%} : {return_df["neu"].sum()/len(return_df):.5%} : {return_df["pos"].sum()/len(return_df):.5%}')
     print("=============================================================================================")
-
-
 
 def train_valid_eval_split(data_list:List) -> Tuple[List[HeteroData], List[HeteroData], List[HeteroData]]:
 
@@ -62,7 +61,7 @@ def train_valid_eval_split(data_list:List) -> Tuple[List[HeteroData], List[Heter
 
     train_mask = dateID['dateID'].between(c.TRAIN_RANGE_BY_DATEID[0], c.TRAIN_RANGE_BY_DATEID[1])
     valid_mask = dateID['dateID'].between(c.VALID_RANGE_BY_DATEID[0], c.VALID_RANGE_BY_DATEID[1])
-    eval_mask = dateID['dateID'].between(c.EVAL_RANGE_BY_DATEID[0], c.EVAL_RANGE_BY_DATEID[1])
+    eval_mask  = dateID['dateID'].between(c.EVAL_RANGE_BY_DATEID[0] , c.EVAL_RANGE_BY_DATEID[1])
 
     del dateID  # Free memory
 
@@ -73,7 +72,6 @@ def train_valid_eval_split(data_list:List) -> Tuple[List[HeteroData], List[Heter
     return train_data, valid_data, eval_data
 
 
-
 class MarketDataset(Dataset):
     def __init__(
             self, 
@@ -82,7 +80,6 @@ class MarketDataset(Dataset):
         
         print(f'device: {torch.device("cuda" if torch.cuda.is_available() else "cpu")}')
         super().__init__(root)
-        # self.load(self.processed_paths[c.PROCESSED_MARKET_DATA_INDEX], HeteroData)
 
     @property
     def raw_dir(self):
@@ -94,10 +91,7 @@ class MarketDataset(Dataset):
 
     @property
     def processed_file_names(self):
-        return [
-            'corr_edge_info.pt',
-            'processed_market_data.pt'
-        ]
+        return [f'data_{dateID}.pt' for dateID in range(c.USE_MIN_TFID, c.USE_MAX_TFID + 1)] # default range : 1 to 6448
 
     def pre_process(self):
         # set "corr" edge
@@ -112,14 +106,14 @@ class MarketDataset(Dataset):
         entire_nodes = {}
 
         # dateIDs for the entire dataset
-        dateIDs = pd.read_parquet(get_parquet_path(c.DATE_ID_FILE_ALIAS))["dateID"].values
-        assert isinstance(dateIDs, np.ndarray), f"dateIDs should be a numpy array, got {type(dateIDs)}"
-        dateIDs = np.sort(dateIDs)
+        dateIDs = pd.read_parquet(get_parquet_path(c.DATE_ID_FILE_ALIAS), columns=["dateID"])
+        assert isinstance(dateIDs, pd.DataFrame), f"dateIDs should be a pandas DataFrame, got {type(dateIDs)}"
+        dateIDs = np.sort(dateIDs).T[0]
 
         # tfIDs for the entire dataset
-        tfIDs = pd.read_parquet(get_parquet_path(c.DATE_ID_FILE_ALIAS))["tfID"].values
-        assert isinstance(tfIDs, np.ndarray), f"tfIDs should be a numpy array, got {type(tfIDs)}"
-        tfIDs = np.sort(tfIDs)
+        tfIDs = pd.read_parquet(get_parquet_path(c.DATE_ID_FILE_ALIAS), columns=["tfID"])
+        assert isinstance(tfIDs, pd.DataFrame), f"tfIDs should be a numpy array, got {type(tfIDs)}"
+        tfIDs = np.sort(tfIDs).T[0]
 
         dateID_to_tfid = dict(zip(dateIDs, tfIDs))
 
@@ -128,11 +122,13 @@ class MarketDataset(Dataset):
         assert isinstance(nodeID_table, pd.DataFrame), f"nodeID_table should be a pandas DataFrame, got {type(nodeID_table)}"
 
         # corr edge
-        if not os.path.exists(self.processed_paths[c.CORR_EDGE_INFO_INDEX]):
+        if not os.path.exists(c.CORR_EDGE_INFO_PATH):
             corr_edge_info = self.pre_process()
-            torch.save(corr_edge_info, self.processed_paths[c.CORR_EDGE_INFO_INDEX])
+            torch.save(corr_edge_info, c.CORR_EDGE_INFO_PATH)
         else:
-            corr_edge_info = torch.load(self.processed_paths[c.CORR_EDGE_INFO_INDEX])
+            corr_edge_info = torch.load(c.CORR_EDGE_INFO_PATH)
+
+        print('')
 
         # Set up the entire_data dictionary
         for edge_type in c.HETERO_EDGE_DICT.keys():
@@ -170,6 +166,9 @@ class MarketDataset(Dataset):
                 'codeIDs_i': codeIDs_i,
                 'codeIDs_j': codeIDs_j
             }
+            print(f'Finished processing edge_type: {edge_type}')
+
+        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
 
         for node_type in c.HETERO_NODE_TYPES:
             node_df = pd.read_parquet(get_parquet_path(node_type))
@@ -187,23 +186,26 @@ class MarketDataset(Dataset):
                 'features': node_features,
                 'node_type': node_type_id
             }
-
+            print(f'Finished processing node_type: {node_type}')
         
         returns = pd.read_parquet(get_parquet_path(c.RETURN_FILE_ALIAS))
         set_labels(returns)  # Set labels for the returns DataFrame
 
         # Create HeteroData objects for each dateID
         for i, (dateID, tfID) in enumerate(dateID_to_tfid.items(), 1):
+            if tfID < c.USE_MIN_TFID or tfID > c.USE_MAX_TFID:
+                continue  # Skip dateIDs outside the specified range
             data = HeteroData()
 
             for edge_type, edge_info in entire_edges.items():
-                edge_index    = edge_info['edge_index']  # shape: [2, num_edges]
-                edge_attr     = edge_info['edge_attr']   # Edge thickness
-                edge_type_id  = edge_info['edge_type']   # Edge type ID
-                node_type_i   = edge_info['node_type_i'] # Node type ID for source node
-                node_type_j   = edge_info['node_type_j'] # Node type ID for target node
-                codeIDs_i     = edge_info['codeIDs_i']   # Code IDs for source node
-                codeIDs_j     = edge_info['codeIDs_j']   # Code IDs for target node
+                edge_index   = edge_info['edge_index']  # shape: [2, num_edges]
+                edge_attr    = edge_info['edge_attr']   # Edge thickness
+                edge_type_id = edge_info['edge_type']   # Edge type ID
+                node_type_i  = edge_info['node_type_i'] # Node type ID for source node
+                node_type_j  = edge_info['node_type_j'] # Node type ID for target node
+                codeIDs_i    = edge_info['codeIDs_i']   # Code IDs for source node
+                codeIDs_j    = edge_info['codeIDs_j']   # Code IDs for target node
+                observable   = edge_info['observable']  # Date IDs for edges
 
                 node1_type, node2_type = c.HETERO_EDGE_DICT[edge_type]
 
@@ -218,7 +220,11 @@ class MarketDataset(Dataset):
 
             # TODO: insert HGT-sampling here
             output_node_set = returns.loc[returns['dateID'] == dateID, 'codeID'].to_list()
-            HGTsampling(data, output_node_set, L=2, n=20)
+            iter_OS = HGTsampling(data, output_node_set, L=2, n=20)
+
+            # print("sampling result")
+            # for node_type, sampled_codeIDs in iter_OS.items(): 
+            #     print(node_type, len(sampled_codeIDs))
 
             for node_type, node_info in entire_nodes.items():
                 codeID = node_info['codeID']
@@ -227,31 +233,31 @@ class MarketDataset(Dataset):
                 node_type_id = node_info['node_type']
 
                 if node_type == "stock":
-                    target_codeID= returns.loc[returns['dateID'] == dateID, 'codeID'].values
-                    assert isinstance(target_codeID, np.ndarray), f"Expected target_codeID to be a numpy array, got {type(target_codeID)}"
+                    target_codeID= returns.loc[returns['dateID'] == dateID, 'codeID']
+                    assert isinstance(target_codeID, pd.Series), f"Expected target_codeID to be a numpy array, got {type(target_codeID)}"
                     target_idx = np.isin(codeID, target_codeID).astype(c.NP_INT32)
                     del target_codeID  # Free memory
                     data[node_type].target = torch.as_tensor(target_idx, dtype=c.TORCH_INT32).cpu()
                     data[node_type].labels = torch.as_tensor(returns.loc[returns['dateID'] == dateID, ['neg', 'neu', 'pos']].values, dtype=c.TORCH_FLOAT32).cpu()
-                    del returns  # Free memory
                 else:
                     target_idx = np.zeros(codeID.shape[0], dtype=c.NP_INT32)
                     data[node_type].target = torch.as_tensor(target_idx, dtype=c.TORCH_INT32).cpu()
                 del target_idx  # Free memory
-               
-                idx = np.where(observable == dateID)
 
-                data[node_type].codeID = torch.as_tensor(codeID[idx], dtype=c.TORCH_INT32).cpu()
-                data[node_type].node_type = torch.as_tensor(node_type_id[idx], dtype=c.TORCH_INT32).cpu()
+                using_codeIDs = iter_OS[node_type] if node_type in iter_OS else []
+                mask_sampling = (observable == dateID) & (np.isin(codeID, using_codeIDs))
+
+                data[node_type].codeID = torch.as_tensor(codeID[mask_sampling], dtype=c.TORCH_INT32).cpu()
+                data[node_type].node_type = torch.as_tensor(node_type_id[mask_sampling], dtype=c.TORCH_INT32).cpu()
 
                 if node_type in ["stock", "mktIdx", "future"]:
                     # LIMITING the features to the GRU_WINDOW_SIZE
-                    mask = (features[:, c.O_DATEID_COL_ID] == dateID) & (tfID - features[:, c.O_TFID_COL_ID] < c.GRU_WINDOW_SIZE)
+                    mask_extract = (features[:, c.O_DATEID_COL_ID] == dateID) & (tfID - features[:, c.O_TFID_COL_ID] < c.GRU_WINDOW_SIZE)
                 if node_type in ["statement"]:
                     # LIMITING the features to the NUM_OCCUR_WINDOW_SIZE
-                    mask = get_occurence_mask(nodeID_table, node_type, dateID, c.NUM_OCCUR_WINDOW_SIZE)
+                    mask_extract = get_occurence_mask(nodeID_table, node_type, dateID, c.NUM_OCCUR_WINDOW_SIZE)
 
-                mf = features[mask]
+                mf = features[mask_extract]
 
                 # for each codeID, thier sequential features are sorted by tfID
                 # it use to get embedding from GRU or attention
@@ -272,8 +278,20 @@ class MarketDataset(Dataset):
                     data[node_type].x = torch.empty((0, 0, 0), dtype=c.TORCH_FLOAT32).cpu()
                     data[node_type].seq_len = torch.empty((0,), dtype=c.TORCH_LONG).cpu()
                 
-            data_list.append(data)
+            torch.save(data, os.path.join(self.processed_dir, f'data_{dateID}.pt'))
             print(f'\rdateID: {dateID},  {i}/{len(dateIDs)}', end='')
         print("\nFinished processing all dateIDs.")
 
-        # self.save(data_list, self.processed_paths[c.PROCESSED_MARKET_DATA_INDEX])
+    def len(self):
+        return len(self.processed_file_names)
+
+    def get(self, tfID:int) -> HeteroData:
+        """
+        Get a HeteroData object by its TFID.
+        """
+        if tfID < c.USE_MIN_TFID or tfID > c.USE_MAX_TFID:
+            raise IndexError("Index out of range")
+    
+        data_path = os.path.join(self.processed_dir, f'data_{tfID}.pt')
+        data = torch.load(data_path)
+        return data

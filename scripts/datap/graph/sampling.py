@@ -7,109 +7,172 @@ import numpy as np
 import scripts.datap.graph.const as c
 
 
-HETERO_EDGE_DICT = c.HETERO_EDGE_DICT
-
 T, S = 0, 1  # T: target node, S: source node
+NodeTypeID = int
+TargetNodeTypeID = NodeTypeID
+EdgeTypeID = int
+SourceNodeTypeID = NodeTypeID
+TargetCodeID  = int
+SourceCodeID  = int
+SourceCodeIDs = List[SourceCodeID]
+AdjacencyMatrix = Dict[SourceNodeTypeID, Dict[EdgeTypeID, Dict[TargetNodeTypeID, Dict[TargetCodeID, SourceCodeIDs]]]]
+
+NormalizedDegreeScore = float
+Budget = Dict[SourceNodeTypeID, Dict[SourceCodeID, NormalizedDegreeScore]]
+
+SampledNodeCodeID = int
+SampledNodeTypeID = int
+
+NeighborSet = Dict[SampledNodeTypeID, List[SampledNodeCodeID]]
+OutputSet   = Dict[SampledNodeTypeID, List[SampledNodeCodeID]]
+
+
+INIT_OS_KEY = 0
+    
 
 __all__ = ['HGTsampling']
 
+def str2id(ch:str) -> EdgeTypeID|NodeTypeID:
+    if ch in c.HETERO_NODE_ID:
+        return c.HETERO_NODE_ID[ch]
+    elif ch in c.HETERO_EDGE_ID:
+        return c.HETERO_EDGE_ID[ch]
+    else:
+        raise ValueError(f"Unknown node or edge type: {ch}")
 
-def Add_In_Budget(Budget, t_node, A, NS) -> None:
-    for s_node_type, ts_edge_type in A[t_node].items():
-        Dt = 1/len(A[t_node]) # get normalized degree of added node t regarding to <τ, e, τ(t)>
-        for s_code_id in A[t_node][s_node_type][ts_edge_type][S]:
-            if s_code_id not in NS: 
-                Budget[s_node_type][s_code_id][0] += Dt
-            # This dataset can ignore time decay,
-            # so it don't have "time" attribute 
+def n_id2type(id:int) -> str:
+    if id in c.HETERO_NODE_ID.values():
+        return list(c.HETERO_NODE_ID.keys())[list(c.HETERO_NODE_ID.values()).index(id)]
+    else:
+        raise ValueError(f"Unknown node or edge type ID: {id}")
+
+def e_id2type(id:int):
+    if id in c.HETERO_EDGE_ID.values():
+        return list(c.HETERO_EDGE_ID.keys())[list(c.HETERO_EDGE_ID.values()).index(id)]
+    else:
+        raise ValueError(f"Unknown edge type ID: {id}")
+
+def Add_In_Budget(budget:Budget, smpl_tgt_cid:int, smpl_tgt_tid:int, A:AdjacencyMatrix, NS:NeighborSet, n:int) -> None:
+    for src_tid in list(A.keys()):
+        for edge_tid in list(A[src_tid].keys()):
+            if smpl_tgt_cid not in A[src_tid][edge_tid][smpl_tgt_tid]:
+                continue
+            all_tgt_ids = A[src_tid][edge_tid][smpl_tgt_tid][smpl_tgt_cid]
+            if len(all_tgt_ids) < n:
+                smpl_tgt_ids = all_tgt_ids
+            else:
+                smpl_tgt_ids = np.random.choice(all_tgt_ids, n, replace = False)
+            Dt = 1. / len(smpl_tgt_ids)
+            for smpl_tgt_id in smpl_tgt_ids:
+                if smpl_tgt_id not in NS[src_tid]:
+                    budget[src_tid][smpl_tgt_id] += Dt
     return
 
-def HGTsampling(data:HeteroData, output_node_set:List[str], L:int, n:int) -> Dict[str, List[int]]:
+def HGTsampling(data:HeteroData, output_node_set:List[int], L:int, n:int) -> OutputSet:
 
-    A = defaultdict( # t_node_type 
-        lambda: defaultdict( # s_node_type
-            lambda: defaultdict( # ts_edge_type
-                lambda: [] # t_code_ids, s_code_ids
+    A:AdjacencyMatrix = defaultdict( # smpl_tid 
+        lambda: defaultdict( # edge_tid
+            lambda: defaultdict( # src_tid
+                lambda: defaultdict( # t_cid
+                    lambda: [] #s_cids
+                )
             )
         )
     )
 
     # Initialize adjacency-Matrix A
-    for ts_edge_type, (t_node_type, s_node_type) in HETERO_EDGE_DICT.items():
-        t_code_ids:torch.Tensor = data[t_node_type, ts_edge_type, s_node_type].node_type_i
-        s_code_ids:torch.Tensor = data[t_node_type, ts_edge_type, s_node_type].node_type_j
-        A[t_node_type][s_node_type][ts_edge_type] = [t_code_ids, s_code_ids]
-
-    OS = defaultdict( # s_node_type
-        lambda: [] # s_code_ids
+    for edge_tid, (tgt_tid, src_tid) in c.HETERO_EDGE_DICT.items():
+        t_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].codeIDs_i
+        s_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].codeIDs_j
+        for t_cid, s_cid in zip(t_code_ids.tolist(), s_code_ids.tolist()):
+            A[str2id(src_tid)][str2id(edge_tid)][str2id(tgt_tid)][t_cid].append(s_cid)
+        
+    OS:OutputSet = defaultdict( # outpusmpl_tid
+        lambda: [] # output_code_ids
     )
 
-    for t_node_type in output_node_set:
-        t_code_ids:torch.Tensor = data[t_node_type].codeIDs
-        OS[t_node_type] = t_code_ids.tolist()
+    NS:NeighborSet = defaultdict( # sampled_node_type
+        lambda: [] # sampled_code_ids
+    )
 
-    NS = OS # Initialize sampled mpde set as output node set
+    # Initialize the output node set OS with the provided output_node_set
+    for init_cid in output_node_set:
+        OS[INIT_OS_KEY].append(init_cid)
 
-    Prob = defaultdict( # s_node_type
-        lambda: defaultdict( # s_code_id
+    NS = OS # Initialize sampled node set as output node set
+
+    Prob = defaultdict( # sampled_node_type
+        lambda: defaultdict( # sampled_code_id
             lambda: 0.0 #[sampling_probability]
         )
     )
 
-    Budget = defaultdict( # s_node_type
-        lambda: defaultdict( # s_code_id
+    budget:Budget = defaultdict( # sampled_node_type
+        lambda: defaultdict( # sampled_code_id
             lambda: 0.0 #[sampled_score]
         )
     )
 
-    for t_node in NS:
-        Add_In_Budget(Budget, t_node, A, NS)
+    for tgt_tids in list(NS.keys()):
+        for tgt_cid in NS[tgt_tids]:
+            Add_In_Budget(budget, tgt_cid, tgt_tids, A, NS, n)
     
     for l in range(L):
-        for s_node_type in Budget:
+        for smpl_src_tid in list(budget.keys()):
 
             # Compute sampling probabilities for each node in Budget
-            for s_code_id in Budget[s_node_type]:
-                Prob[s_node_type][s_code_id] = Budget[s_node_type][s_code_id]**2
+            for s_cid in budget[smpl_src_tid]:
+                Prob[smpl_src_tid][s_cid] = budget[smpl_src_tid][s_cid]**2
 
             # Normalize Probabilities
-            prob_sum = sum(Prob[s_node_type].values())
-            for s_code_id in Prob[s_node_type]:
-                Prob[s_node_type][s_code_id] /= prob_sum
+            prob_sum = sum(Prob[smpl_src_tid].values())
+            for s_cid in Prob[smpl_src_tid]:
+                Prob[smpl_src_tid][s_cid] /= prob_sum
 
             # Sample n nodes from Budget using Prob
-            sampled_code_ids = np.random.choice(
-                list(Prob[s_node_type].keys()), 
-                size=min(n, len(Prob[s_node_type])), 
+            sampled_ids = np.random.choice(
+                list(Prob[smpl_src_tid].keys()), 
+                size=min(n, len(Prob[smpl_src_tid])), 
                 replace=False, 
-                p=list(Prob[s_node_type].values())
+                p=list(Prob[smpl_src_tid].values())
             )
 
-            for s_code_id in sampled_code_ids:
+            samples_keys = np.array(list(budget[smpl_src_tid].keys()))
+
+            # Create a new sampled node set NS for the current iteration
+            NS = defaultdict( # src_tid
+                lambda: [] # s_code_ids
+            )
+
+            for s_cid in sampled_ids:
+                NS[smpl_src_tid].append(s_cid)
+
+
+            for smpl_src_cid in samples_keys:
 
                 # Add sampled node into OS
-                OS[s_node_type].append(s_code_id)
+                OS[smpl_src_tid].append(smpl_src_cid)
 
                 # Add neighbors of t to Budget
-                Add_In_Budget(Budget, t_node, A, NS)
+                Add_In_Budget(budget, smpl_src_cid, smpl_src_tid, A, NS, n)
 
                 # Remove sampled node t from Budget
-                Budget[s_node_type].pop(s_code_id)
+                budget[smpl_src_tid].pop(smpl_src_cid)
 
     # Reconstruct the sampled adjacnecy matrix ~A among the sampled nodes OS from A
-    for ts_edge_type, (t_node_type, s_node_type) in HETERO_EDGE_DICT.items():
+    for edge_tid, (tgt_tid, src_tid) in c.HETERO_EDGE_DICT.items():        
 
-        mask_i = data[t_node_type, ts_edge_type, s_node_type].node_type_i.apply_(lambda codeID: codeID in OS[t_node_type])
-        mask_j = data[t_node_type, ts_edge_type, s_node_type].node_type_j.apply_(lambda codeID: codeID in OS[s_node_type])
+        mask_i = data[tgt_tid, edge_tid, src_tid].node_type_i.apply_(lambda codeID: codeID in OS[str2id(tgt_tid)])
+        mask_j = data[tgt_tid, edge_tid, src_tid].node_type_j.apply_(lambda codeID: codeID in OS[str2id(src_tid)])
 
         mask = mask_i & mask_j
 
-        data[t_node_type, ts_edge_type, s_node_type].edge_index   = data[t_node_type, ts_edge_type, s_node_type].edge_index[:, mask]
-        data[t_node_type, ts_edge_type, s_node_type].edge_attr    = data[t_node_type, ts_edge_type, s_node_type].edge_attr[mask]
-        data[t_node_type, ts_edge_type, s_node_type].edge_type_id = data[t_node_type, ts_edge_type, s_node_type].edge_type[mask]
-        data[t_node_type, ts_edge_type, s_node_type].node_type_i  = data[t_node_type, ts_edge_type, s_node_type].node_type_i[mask]
-        data[t_node_type, ts_edge_type, s_node_type].node_type_j  = data[t_node_type, ts_edge_type, s_node_type].node_type_j[mask]
-        data[t_node_type, ts_edge_type, s_node_type].codeIDs_i    = data[t_node_type, ts_edge_type, s_node_type].codeIDs_i[mask]
-        data[t_node_type, ts_edge_type, s_node_type].codeIDs_j    = data[t_node_type, ts_edge_type, s_node_type].codeIDs_j[mask]
+        data[tgt_tid, edge_tid, src_tid].edge_index   = data[tgt_tid, edge_tid, src_tid].edge_index[:, mask]
+        data[tgt_tid, edge_tid, src_tid].edge_attr    = data[tgt_tid, edge_tid, src_tid].edge_attr[mask]
+        data[tgt_tid, edge_tid, src_tid].edge_type_id = data[tgt_tid, edge_tid, src_tid].edge_type_id[mask]
+        data[tgt_tid, edge_tid, src_tid].node_type_i  = data[tgt_tid, edge_tid, src_tid].node_type_i[mask]
+        data[tgt_tid, edge_tid, src_tid].node_type_j  = data[tgt_tid, edge_tid, src_tid].node_type_j[mask]
+        data[tgt_tid, edge_tid, src_tid].codeIDs_i    = data[tgt_tid, edge_tid, src_tid].codeIDs_i[mask]
+        data[tgt_tid, edge_tid, src_tid].codeIDs_j    = data[tgt_tid, edge_tid, src_tid].codeIDs_j[mask]
 
     return OS

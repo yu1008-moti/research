@@ -9,9 +9,22 @@ NUM_LABELS = 3  # Assuming 3 classes for classification
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 MAX_DATEID = 6554 # include this dateID
-TRAIN_UP_LIMIT_DATEID = 6082 # TRAIN is 1 to 6082)
-EVAL_UP_LIMIT_DATEID = MAX_DATEID # EVAL is 6083 to MAX_DATEID (6554)
+
+# select * from '..\parquet\dateID.parquet' where TradeDate in [cast('2015-01-05' as DATE), cast('2025-12-30' as DATE)];
+# ┌───────┬────────────┬────────┬───────┬───────┐
+# │ tfID  │ TradeDate  │ dateID │ train │ eval  │
+# │ int64 │    date    │ int64  │ int32 │ int32 │
+# ├───────┼────────────┼────────┼───────┼───────┤
+# │  1634 │ 2015-01-05 │   2435 │     1 │     0 │
+# │  4321 │ 2025-12-30 │   6447 │     0 │     1 │
+# └───────┴────────────┴────────┴───────┴───────┘
+USE_MIN_TFID = 1634 # means 2015-01-05
+USE_MAX_TFID = 4321 # means 2025-12-30
+
 PARQUET_DISR = Path("db/parquet")
+
+CORR_EDGE_INFO_PATH = Path("scripts/datap/graph/processed/corr_edge_info.pt")
+
 
 # address: 0 is center (*_i), 1 is neighbor (*_j)
 HETERO_EDGE_DICT: Dict[str, Tuple[str, str]] = {
@@ -46,6 +59,15 @@ HETERO_NODE_ID: Dict[str, int] = {
     "statement"    : 1,
     "mktIdx"       : 2,
     "future"       : 3 
+}
+
+# select count(*)-4 as num_cols from (describe '.\*\*.parquet');
+# "4" means "tfID", "codeID", "dateID", "nodeID" columns
+NODE_TYPE_CFG: Dict[str, int] = {
+    "stock"        : 16,
+    "statement"    : 60,
+    "mktIdx"       : 4,
+    "future"       : 16
 }
 
 # <duckdb side processing>
@@ -86,11 +108,31 @@ O_MAINDATA_START_ID = 4
 GRU_WINDOW_SIZE = 52
 NUM_OCCUR_WINDOW_SIZE = 12
 
-
+START_IDX = 0
+END_IDX = 1
 # reference: duckdb side processing
-TRAIN_RANGE_BY_DATEID = (2435, 5351) # (2015-01-05, 2022-12-30)
+TRAIN_RANGE_BY_DATEID = (1334, 5351) # (2015-01-05, 2022-12-30)
 VALID_RANGE_BY_DATEID = (5356, 5715) # (2023-01-04, 2023-12-29)
 EVAL_RANGE_BY_DATEID  = (5721, 6447) # (2024-01-04, 2025-12-30)
+
+# select * from '..\parquet\dateID.parquet' where dateID in [2435, 5351, 5356, 5715, 5721, 6447] order by tfID;
+# ┌───────┬────────────┬────────┬───────┬───────┐
+# │ tfID  │ TradeDate  │ dateID │ train │ eval  │
+# │ int64 │    date    │ int64  │ int32 │ int32 │
+# ├───────┼────────────┼────────┼───────┼───────┤
+# │  1634 │ 2015-01-05 │   2435 │     1 │     0 │
+# │  3587 │ 2022-12-30 │   5351 │     1 │     0 │
+# │  3588 │ 2023-01-04 │   5356 │     1 │     0 │
+# │  3833 │ 2023-12-29 │   5715 │     1 │     0 │
+# │  3834 │ 2024-01-04 │   5721 │     1 │     0 │
+# │  4321 │ 2025-12-30 │   6447 │     0 │     1 │
+# └───────┴────────────┴────────┴───────┴───────┘
+TRAIN_RANGE_BY_TFID = (1634, 3587) # (2015-01-05, 2022-12-30)
+VALID_RANGE_BY_TFID = (3588, 3833) # (2023-01-04, 2023-12-29)
+EVAL_RANGE_BY_TFID  = (3834, 4321) # (2024-01-04, 2025-12-30)
+TRAIN_LENGTH = TRAIN_RANGE_BY_TFID[1] - TRAIN_RANGE_BY_TFID[0] + 1
+VALID_LENGTH = VALID_RANGE_BY_TFID[1] - VALID_RANGE_BY_TFID[0] + 1
+EVAL_LENGTH  = EVAL_RANGE_BY_TFID[1]  - EVAL_RANGE_BY_TFID[0]  + 1
 
 # feature type definition
 NP_FLOAT32 = np.float32
