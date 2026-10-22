@@ -10,6 +10,7 @@ import scripts.datap.graph.const as c
 from scripts.datap.graph.dataset import MarketDataset
 
 LOSS_FN = CrossEntropyLoss()  # Using CrossEntropyLoss for multi-class classification # Using Adam optimizer for training
+NODENAME2NODEID = {'stock':0, 'statement':1, 'mktIdx':2, 'future':3}
 
 def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:int):
 
@@ -27,16 +28,18 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
             
             optimizer.zero_grad()
 
-            x            = torch.cat([data[node_type].x for node_type in c.HETERO_NODE_TYPES], dim=0)
-            target       = torch.cat([data[node_type].target for node_type in c.HETERO_NODE_TYPES], dim=0)
-            labels       = data["stock"].labels
+            x            = {NODENAME2NODEID.get(node_type, None): data[node_type].x       for node_type in c.HETERO_NODE_TYPES}
+            target       = {NODENAME2NODEID.get(node_type, None): data[node_type].target  for node_type in c.HETERO_NODE_TYPES}
+            seq_len      = {NODENAME2NODEID.get(node_type, None): data[node_type].seq_len for node_type in c.HETERO_NODE_TYPES}
             
-            edge_index   = torch.cat([data[edge_type].edge_index  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=1)
-            node_type_i  = torch.cat([data[edge_type].node_type_i for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0)
-            node_type_j  = torch.cat([data[edge_type].node_type_j for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0)
-            edge_type_ij = torch.cat([data[edge_type].edge_type   for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0)
+            edge_index   = torch.cat([data[edge_type].edge_index   for edge_type in c.HETERO_EDGE_DICT.keys()], dim=1).to(c.DEVICE)
+            node_type_i  = torch.cat([data[edge_type].node_type_i  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
+            node_type_j  = torch.cat([data[edge_type].node_type_j  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
+            edge_type_ij = torch.cat([data[edge_type].edge_type_ij for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
+            
+            labels       = [data["stock"].labels]
 
-            output = model(x, edge_index, node_type_i, node_type_j, edge_type_ij, labels, target)
+            output = model(x, seq_len, edge_index, node_type_i, node_type_j, edge_type_ij, target)
 
             loss = LOSS_FN(output, labels)
             epock_train_losses.append(loss.item())
@@ -49,14 +52,16 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
 
             data = dataset.get(idx)
 
-            x            = torch.cat([data[node_type].x for node_type in c.HETERO_NODE_TYPES], dim=0)
-            target       = torch.cat([data[node_type].target for node_type in c.HETERO_NODE_TYPES], dim=0)
+            x            = torch.cat([data[node_type].x for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            target       = torch.cat([data[node_type].target for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            seq_len      = torch.cat([data[node_type].seq_len for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            codeID       = torch.cat([data[node_type].codeID for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
             labels       = data["stock"].labels
             
-            edge_index   = torch.cat([data[edge_type].edge_index  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=1)
-            node_type_i  = torch.cat([data[edge_type].node_type_i for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0)
-            node_type_j  = torch.cat([data[edge_type].node_type_j for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0)
-            edge_type_ij = torch.cat([data[edge_type].edge_type   for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0)
+            edge_index   = torch.cat([data[edge_type].edge_index  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=1).to(c.DEVICE)
+            node_type_i  = torch.cat([data[edge_type].node_type_i for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
+            node_type_j  = torch.cat([data[edge_type].node_type_j for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
+            edge_type_ij = torch.cat([data[edge_type].edge_type_ij for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
 
             output = model(x, edge_index, node_type_i, node_type_j, edge_type_ij, labels, target)
 
@@ -80,16 +85,21 @@ if __name__ == "__main__":
     parser.add_argument("--epochs"    , type=int  , default=32 , help="Number of epochs to train.")
     parser.add_argument("--num-layer" , type=int  , default=2  , help="Number of GNN layers.")
     parser.add_argument("--lr"        , type=float, default=0.001, help="Learning rate.")
+    parser.add_argument('--bidirectional', action='store_true', help="Use bidirectional GRU.")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    assert device == "cuda", "CUDA is not available."
+    print(f"Using device: {device}")
 
     model = MarketHGTModel(
         in_hid        = args.in_hid, 
         out_hid       = args.out_hid, 
         num_head      = args.num_head, 
+        num_layers    = args.num_layer,
         dropout       = args.dropout,
-        node_type_cfg = c.NODE_TYPE_CFG
+        node_type_cfg = c.NODE_TYPE_CFG,
+        bidirectional  = False
     ).to(device)
 
     # Load the dataset by get-method with tfID

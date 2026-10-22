@@ -10,7 +10,7 @@ NUM_LABELS = c.NUM_LABELS  # Assuming 3 classes for classification
 DEVICE = c.DEVICE
 
 class Classifier(nn.Module):
-    def __init__(self, in_hid:int, ):
+    def __init__(self, in_hid:int):
         super().__init__()
         self.classifier = nn.Linear(in_hid, NUM_LABELS)  # Assuming 3 classes for classification
 
@@ -24,10 +24,15 @@ class myGRU(nn.Module):
         self.node_type_cfg = node_type_cfg
         self.hidden_size = hidden_size
         self.bidirectional = bidirectional
+        
+        self.linear_layers = nn.ModuleDict({
+            node_type: nn.Linear(in_dim*2, hidden_size) 
+            for node_type, in_dim in node_type_cfg.items()
+        })
 
         self.GRUs = nn.ModuleList([
             nn.GRU(
-                in_dim, 
+                in_dim,
                 self.hidden_size,
                 batch_first=True,
                 bidirectional=bidirectional
@@ -37,41 +42,48 @@ class myGRU(nn.Module):
 
     def forward(self, x, seq_len, x_node_types):
 
-        assert x.size(0) == x_node_types.size(0), "Mismatch in number of nodes and node types"
+        # assert len(x) == x_node_types.size(0), "Mismatch in number of nodes and node types"
 
-        empty = seq_len == 0
-        lens = seq_len.clamp(min=1).cpu()
-
-        packed = pack_padded_sequence(x, lens, batch_first=True, enforce_sorted=False)
-
-        embeddings = torch.zeros(x.size(0), self.hidden_size, device=DEVICE)
+        emb = torch.zeros(len(x_node_types), self.hidden_size, device=DEVICE)
+        # x_node_types = torch.zeros(len(x_node_types), dtype=torch.long, device=DEVICE)  # Placeholder for node types
+        
+        idx_st = 0
+        idx_end = 0
 
         for node_type in range(len(self.node_type_cfg)):
-            idx = (x_node_types == node_type)
-            x_node_type = packed[idx].unsqueeze(0)  # Add sequence dimension
-            _, h_n = self.GRUs[node_type](x_node_type)[0].squeeze(0)  # Remove sequence dimension
+            # empty = seq_len[node_type] == 0
+            lens  = seq_len[node_type].clamp(min=1)
+            packed = pack_padded_sequence(
+                x[node_type], lens, batch_first=True, enforce_sorted=False
+            ).to(DEVICE)
+            idx_end += len(packed.sorted_indices) 
+            o_n, h_n = self.GRUs[node_type](packed)
             if self.bidirectional:
-                h = h_n[-2] + h_n[-1]
+                h = torch.cat([h_n[-2], h_n[-1]], dim=-1)
+                h = self.linear_layers[node_type](h)  # Apply linear layer to reduce dimension
             else:
                 h = h_n[-1]
-            embeddings[idx] = h
+            emb[idx_st:idx_end] = h
+            idx_st = idx_end
 
-        return embeddings.masked_fill(empty.unsqueeze(-1), 0.0)  # Fill embeddings for empty sequences with zeros
+        return emb
             
 
-class MarketHGTModel(nn.Module):
+class MarketHGTModel(nn.Module):#
     def __init__(
-            self, in_hid:int, out_hid:int, num_head:int, dropout:float, node_type_cfg: Dict[str, int], bidirectional: bool = False):
+            self, in_hid:int, out_hid:int, num_head:int, num_layers:int, dropout:float, node_type_cfg: Dict[str, int], bidirectional: bool = False):
         super().__init__()
+        # 
         self.gru = myGRU(out_hid, node_type_cfg, bidirectional)
-        self.hgt_conv = conv.MarketHGTConv(in_hid, out_hid, num_head, dropout)
+        self.hgt_conv = conv.GNNModel(in_hid, out_hid, num_head, num_layers, dropout)
         self.classifier = Classifier(out_hid)
 
-    def forward(self, x, edge_index, node_type_i, node_type_j, edge_type_array, target):
+    def forward(self, x, seq_len, edge_index, node_type_i, node_type_j, edge_type_ij, target):
         # Pass through GRU
-        x = self.gru(x, node_type_i)  # Assuming node_type_i represents the node types for GRU
+        # forward(self, x, seq_len, x_node_types):
+        x = self.gru(x, seq_len, node_type_i)  # Assuming node_type_i represents the node types for GRU
         # Pass through HGTConv
-        x = self.hgt_conv(x, edge_index, node_type_i, node_type_j, edge_type_array)
+        x = self.hgt_conv(x, edge_index, node_type_i, node_type_j, edge_type_ij)
         
         # Pass through classifier
         return self.classifier(x, target)  # Assuming classifier takes x and target for loss computation

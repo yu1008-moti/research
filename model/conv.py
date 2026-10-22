@@ -7,7 +7,7 @@ from torch_geometric.nn.inits import glorot
 
 from typing import List
 
-NODE_TYPES:List[str] = ['stocks', 'statements', 'Mkt', 'topix', 's33', 's17', 'future']
+NODE_TYPES:List[str] = ['stocks', 'statements', 'mktIdx', 'future']
 EDGE_TYPES:List[str] = ['corr', 'made_up_Mkt', 'made_up_topix', 'made_up_s33', 'made_up_s17', 'recent_report', 'index_future']
 
 class MarketHGTConv(MessagePassing):
@@ -37,10 +37,11 @@ class MarketHGTConv(MessagePassing):
         glorot(self.W_msg)
 
     
-    def forward(self, x, edge_index, node_type_i, node_type_j, edge_type_array):
-        self.propagate(edge_index, x=x, node_type_i=node_type_i, node_type_j=node_type_j, edge_type_array=edge_type_array)
+    def forward(self, x, edge_index, node_type, edge_type):
+        # x has shape [N, in_hid]
+        self.propagate(edge_index, x=x, node_type=node_type, edge_type=edge_type)
 
-    def message(self, x_i, x_j, node_type_i, node_type_j, edge_type_array, device):
+    def message(self, x_i, x_j, node_type_i, node_type_j, edge_type_ij, device):
         # x_j has shape [E, in_hid]
         # i : center node
         # j : neighbor node
@@ -55,8 +56,11 @@ class MarketHGTConv(MessagePassing):
             for j, source_node_type in enumerate(NODE_TYPES):
                 source_idx = (node_type_j == source_node_type)
                 for r, rel_type in enumerate(EDGE_TYPES):
-                    rel_idx = (edge_type_array == rel_type)
+                    rel_idx = (edge_type_ij == rel_type)
                     edge_idx = target_idx & source_idx & rel_idx
+                    
+                    if sum(edge_idx) == 0:
+                        continue
 
                     target_x_i = x_i[edge_idx]
                     source_x_j = x_j[edge_idx]
@@ -99,7 +103,7 @@ class GNNModel(Module):
         super().__init__()
         self.layers = ModuleList([MarketHGTConv(in_hid, out_hid, num_head, dropout) for _ in range(num_layers)])
 
-    def forward(self, x, edge_index, node_type_i, node_type_j, edge_type_array):
+    def forward(self, x, edge_index, node_type_i, node_type_j, edge_type_ij):
         for layer in self.layers:
-            x = layer(x, edge_index, node_type_i, node_type_j, edge_type_array)
+            x = layer(x, edge_index, node_type_i, node_type_j, edge_type_ij)
         return x

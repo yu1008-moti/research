@@ -105,8 +105,15 @@ O_NODEID_COL_ID = 3
 O_MAINDATA_START_ID = 4
 
 # window size difinition
-GRU_WINDOW_SIZE = 52
+GRU_WINDOW_SIZE = 25
 NUM_OCCUR_WINDOW_SIZE = 12
+
+# capm correlation calculation config
+DEFAULT_WINDOW_SIZE = GRU_WINDOW_SIZE  # Default window size for rolling regression
+CORR_THRESHOLD = 0.5  # Default threshold for correlation filtering
+EDGE_TYPE = 'corr'
+JENSEN_ALPHA = 'const'
+BETA = 0
 
 START_IDX = 0
 END_IDX = 1

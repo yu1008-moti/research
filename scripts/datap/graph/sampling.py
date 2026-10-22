@@ -82,8 +82,8 @@ def HGTsampling(data:HeteroData, output_node_set:List[int], L:int, n:int) -> Out
 
     # Initialize adjacency-Matrix A
     for edge_tid, (tgt_tid, src_tid) in c.HETERO_EDGE_DICT.items():
-        t_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].codeIDs_i
-        s_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].codeIDs_j
+        t_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].edge_index[0]
+        s_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].edge_index[1]
         for t_cid, s_cid in zip(t_code_ids.tolist(), s_code_ids.tolist()):
             A[str2id(src_tid)][str2id(edge_tid)][str2id(tgt_tid)][t_cid].append(s_cid)
         
@@ -172,7 +172,5 @@ def HGTsampling(data:HeteroData, output_node_set:List[int], L:int, n:int) -> Out
         data[tgt_tid, edge_tid, src_tid].edge_type_id = data[tgt_tid, edge_tid, src_tid].edge_type_id[mask]
         data[tgt_tid, edge_tid, src_tid].node_type_i  = data[tgt_tid, edge_tid, src_tid].node_type_i[mask]
         data[tgt_tid, edge_tid, src_tid].node_type_j  = data[tgt_tid, edge_tid, src_tid].node_type_j[mask]
-        data[tgt_tid, edge_tid, src_tid].codeIDs_i    = data[tgt_tid, edge_tid, src_tid].codeIDs_i[mask]
-        data[tgt_tid, edge_tid, src_tid].codeIDs_j    = data[tgt_tid, edge_tid, src_tid].codeIDs_j[mask]
 
     return OS

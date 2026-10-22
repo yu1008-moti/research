@@ -4,15 +4,7 @@ import pandas as pd
 from statsmodels.regression.rolling import RollingOLS
 import statsmodels.api as sm
 from typing import List, Tuple
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DEFAULT_WINDOW_SIZE = 52  # Default window size for rolling regression
-THRESHOLD = 0.5  # Default threshold for correlation filtering
-
-EDGE_TYPE = 'corr'
-
-JENSEN_ALPHA = 'const'
-BETA = 0
+import scripts.datap.graph.const as c
 
 
 __all__ = ['get_corr_edge']
@@ -58,12 +50,12 @@ def _calc_residuals(capm_data: pd.DataFrame):
             short_length_codes.append(code)
         else:
             X = sm.add_constant(data=X)
-            result = RollingOLS(endog=y, exog=X, window=min(DEFAULT_WINDOW_SIZE, len(X))).fit()
-            pred_y = result.params[JENSEN_ALPHA] + result.params[BETA] * df['rm'] # y'= α + βx
+            result = RollingOLS(endog=y, exog=X, window=min(c.DEFAULT_WINDOW_SIZE, len(X))).fit()
+            pred_y = result.params[c.JENSEN_ALPHA] + result.params[c.BETA] * df['rm'] # y'= α + βx
             
             capm_data.loc[df.index, 'residual'] = y - pred_y # r = y - y'
-            capm_data.loc[df.index, 'alpha']    = result.params[JENSEN_ALPHA] # α
-            capm_data.loc[df.index, 'beta']     = result.params[BETA] # β
+            capm_data.loc[df.index, 'alpha']    = result.params[c.JENSEN_ALPHA] # α
+            capm_data.loc[df.index, 'beta']     = result.params[c.BETA] # β
 
         print(f"\rProcessed codeID: {code}", end='')
     print(f"\nshort_length_codes: {short_length_codes} ({len(short_length_codes)})")
@@ -72,19 +64,19 @@ def _calc_residuals(capm_data: pd.DataFrame):
 
 def _calc_corr_matrix(pivot_tensor: torch.Tensor):
     T, _ = pivot_tensor.shape
-    buf = pivot_tensor[:DEFAULT_WINDOW_SIZE, :]
+    buf = pivot_tensor[:c.DEFAULT_WINDOW_SIZE, :]
     sum = torch.sum(buf, dim=0)
     gram_matrix = buf.T @ buf
 
-    for t in range(DEFAULT_WINDOW_SIZE, T):
-        mean = sum / DEFAULT_WINDOW_SIZE
-        cov = (gram_matrix / DEFAULT_WINDOW_SIZE) - torch.outer(mean, mean)
+    for t in range(c.DEFAULT_WINDOW_SIZE, T):
+        mean = sum / c.DEFAULT_WINDOW_SIZE
+        cov = (gram_matrix / c.DEFAULT_WINDOW_SIZE) - torch.outer(mean, mean)
         std = torch.sqrt(torch.diag(cov))
         corr = cov / torch.outer(std, std)
         corr = torch.nan_to_num(corr, nan=0.0) 
         corr.fill_diagonal_(0)
-        # mask = torch.abs(corr) > THRESHOLD
-        mask = corr > THRESHOLD
+        # mask = torch.abs(corr) > c.THRESHOLD
+        mask = corr > c.CORR_THRESHOLD
 
         edge_indices, edge_values = _get_indices_values(corr, mask)
 
@@ -94,7 +86,7 @@ def _calc_corr_matrix(pivot_tensor: torch.Tensor):
         yield t, edge_indices, edge_values
 
         x_new = pivot_tensor[t]
-        x_old = pivot_tensor[t - DEFAULT_WINDOW_SIZE]
+        x_old = pivot_tensor[t - c.DEFAULT_WINDOW_SIZE]
         sum  += x_new - x_old
         gram_matrix += torch.outer(x_new, x_new) - torch.outer(x_old, x_old)
 
@@ -110,7 +102,7 @@ def get_corr_edge(capm_data: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor, 
     pivot_tensor = torch.tensor(
         return_matrix.values,
         dtype=torch.float32,
-        device=DEVICE
+        device=c.DEVICE
     )
 
     dateIDList:List[int] = return_matrix.index.values.tolist()
@@ -118,21 +110,9 @@ def get_corr_edge(capm_data: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor, 
     codeID_i_list, codeID_j_list = [], []
 
     for i, (t, edge_indices, edge_values) in enumerate(_calc_corr_matrix(pivot_tensor), 1):
-        dateID = dateIDList[t]
-        observable = torch.full((edge_values.shape[0],), dateID, dtype=torch.int16)
-
-        codeID_i = edge_indices[0, :]
-        codeID_j = edge_indices[1, :]
-
-        codeID_i_list.append(codeID_i)
-        codeID_j_list.append(codeID_j)
-
-        edge_indices[0, :].apply_(lambda codeID: _get_nodeID(capm_data, codeID, dateID))
-        edge_indices[1, :].apply_(lambda codeID: _get_nodeID(capm_data, codeID, dateID))
-
         edge_indices_list.append(edge_indices)
         edge_values_list.append(edge_values)
-        observable_list.append(observable)
+        observable_list.append(torch.full((edge_values.shape[0],), dateIDList[t], dtype=torch.int16))
 
         print(f"\r{i}/{len(dateIDList)}: {dateIDList[t]}", end='')
     print("\nFinished")
@@ -140,7 +120,5 @@ def get_corr_edge(capm_data: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor, 
     edge_index = torch.cat(edge_indices_list, dim=1).to(torch.long).cpu()
     edge_attr  = torch.cat(edge_values_list, dim=0).to(torch.float32).cpu()
     dateIDs = torch.cat(observable_list, dim=0).to(torch.int16).cpu()
-    codeIDs_i = torch.cat(codeID_i_list, dim=0).to(torch.int32).cpu()
-    codeIDs_j = torch.cat(codeID_j_list, dim=0).to(torch.int32).cpu()
 
-    return edge_index, dateIDs, edge_attr, codeIDs_i, codeIDs_j
+    return edge_index, dateIDs, edge_attr
