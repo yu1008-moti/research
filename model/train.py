@@ -88,10 +88,6 @@ if __name__ == "__main__":
     parser.add_argument('--bidirectional', action='store_true', help="Use bidirectional GRU.")
     args = parser.parse_args()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    assert device == "cuda", "CUDA is not available."
-    print(f"Using device: {device}")
-
     model = MarketHGTModel(
         in_hid        = args.in_hid, 
         out_hid       = args.out_hid, 
@@ -100,7 +96,7 @@ if __name__ == "__main__":
         dropout       = args.dropout,
         node_type_cfg = c.NODE_TYPE_CFG,
         bidirectional  = False
-    ).to(device)
+    ).to(c.DEVICE)
 
     # Load the dataset by get-method with tfID
     dataset = MarketDataset(root="pt")

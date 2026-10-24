@@ -6,6 +6,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
 from torch.nn.utils.rnn import pad_sequence
+import duckdb as sql
 
 import scripts.datap.graph.stock_corr_stock  as stock_corr_stock
 import scripts.datap.graph.const as c
@@ -51,12 +52,11 @@ def set_labels(return_df: pd.DataFrame) -> None:
     return_df['pos'] = (return_df['return'] > high_threshold).astype(int)
     return_df['neu'] = ((return_df['return'] >= low_threshold) & (return_df['return'] <= high_threshold)).astype(int)
 
-    print("\n====================== REPORT: Labeling of returns based on thresholds ======================")
+    print("\nREPORT: Labeling of returns based on thresholds")
     print(f"Number of samples used to define thresholds: {num_define_labels_samples}")
     print(f"Label thresholds   : low={low_threshold}, high={high_threshold}")
     print(f"Label distribution : neg={return_df['neg'].sum()}, pos={return_df['pos'].sum()}, neu={return_df['neu'].sum()}")
-    print(f'(%) neg : neu : pos = {return_df["neg"].sum()/len(return_df):.5%} : {return_df["neu"].sum()/len(return_df):.5%} : {return_df["pos"].sum()/len(return_df):.5%}')
-    print("=============================================================================================")
+    print(f'(%) neg : neu : pos = {return_df["neg"].sum()/len(return_df):.5%} : {return_df["neu"].sum()/len(return_df):.5%} : {return_df["pos"].sum()/len(return_df):.5%}\n')
 
 def train_valid_eval_split(data_list:List) -> Tuple[List[HeteroData], List[HeteroData], List[HeteroData]]:
 
@@ -114,7 +114,7 @@ class MarketDataset(Dataset):
             return
 
         # Read data into huge `Data` list.
-        data_list = []
+        # data_list = []
         entire_edges = {}
         entire_nodes = {}
 
