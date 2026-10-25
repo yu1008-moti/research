@@ -5,12 +5,12 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
-from torch.nn.utils.rnn import pad_sequence
 import duckdb as sql
 
 import scripts.datap.graph.stock_corr_stock  as stock_corr_stock
 import scripts.datap.graph.const as c
 from scripts.datap.graph.sampling import HGTsampling
+import scripts.datap.graph.dataset_helper as h
 import os
 
 
@@ -19,21 +19,6 @@ __all__ = ['MarketDataset', 'train_valid_eval_split']
 
 def get_parquet_path(name: str) -> Path:
     return c.PARQUET_DISR / f"{name}.parquet"
-
-def get_occurence_mask(df: pd.DataFrame, col: str, dateID: int, num_occur_window_size: int) -> pd.Series:
-    df_o = df[(df['nodeType']==col)].sort_values(by=['dateID', 'codeID']).copy()
-    df_o['current_num_occur'] = df_o['codeID'].map(
-        df_o[df_o['dateID'] <= dateID]
-        .sort_values(by=['dateID', 'codeID'])
-        .groupby('codeID')['num_occur']
-        .max()
-    )
-    df_o.loc[df_o['dateID'] > dateID, 'current_num_occur'] = np.nan
-    df_o['num_occur'] = df_o['num_occur'] - (df_o['current_num_occur'] - (num_occur_window_size - 1))
-    mask =  df_o['num_occur'].between(0, num_occur_window_size - 1) & df_o['codeID'].isin(df_o.loc[df_o['dateID'] == dateID, 'codeID'].unique())
-    assert isinstance(mask, pd.Series), f"Expected mask to be a pandas Series, got {type(mask)}"
-    del df_o  # Free memory
-    return mask
     
 def set_labels(return_df: pd.DataFrame) -> None:
 
@@ -88,6 +73,7 @@ class MarketDataset(Dataset):
         if os.path.exists(os.path.join(root, "processed")):
             print(f"Processed data found in {os.path.join(root, 'processed')}. Skipping processing.")
             self.undo = True
+        self.conn = sql.connect(database=c.DB_PATH, read_only=True)
         super().__init__(root)
 
     @property
@@ -102,205 +88,73 @@ class MarketDataset(Dataset):
     def processed_file_names(self):
         return [f'data_{dateID}.pt' for dateID in range(c.USE_MIN_TFID, c.USE_MAX_TFID + 1)] # default range : 1 to 6448
 
-    def pre_process(self):
+    def pre_process(self) -> Dict[str, np.ndarray]:
         # set "corr" edge
-        capm_data = pd.read_parquet(get_parquet_path(c.CAPM_DATA_FILE_ALIAS))
-        return stock_corr_stock.get_corr_edge(capm_data)
+        if not os.path.exists(c.CORR_EDGE_INFO_PATH):
+            capm_data = self.conn.execute("SELECT * from tools.capm_data").fetchdf()
+            edge_index, tIDs, attr = stock_corr_stock.get_corr_edge(capm_data)
+            etID = np.full_like(tIDs, c.HETERO_EDGE_ID["corr"], dtype=c.NP_INT32)
+            np.savez(c.CORR_EDGE_INFO_PATH, edge_index=edge_index, tIDs=tIDs, attr=attr, etID=etID)
+            del capm_data  # Free memory
+        else:
+            edge_index, tIDs, attr, etID = np.load(c.CORR_EDGE_INFO_PATH)
+        assert len(edge_index) == len(tIDs) == len(attr) == len(etID) == 0, "Expected empty arrays for corr_edge_info"
+        return {'edge_index': edge_index, 'tIDs': tIDs, 'attr': attr, 'etIDs': etID}
 
     def process(self):
         
-        if self.undo:
-            print("Undoing the previous processing...")
-            return
+        if self.undo: return
 
         # Read data into huge `Data` list.
         # data_list = []
-        entire_edges = {}
-        entire_nodes = {}
+        global_edges: Dict[int, Any] = {}
+        global_nodes: Dict[int, Any] = {}
 
-        # dateIDs for the entire dataset
-        dateIDs = pd.read_parquet(get_parquet_path(c.DATE_ID_FILE_ALIAS), columns=["dateID"])
-        assert isinstance(dateIDs, pd.DataFrame), f"dateIDs should be a pandas DataFrame, got {type(dateIDs)}"
-        dateIDs = np.sort(dateIDs).T[0]
-
-        # tfIDs for the entire dataset
-        tfIDs = pd.read_parquet(get_parquet_path(c.DATE_ID_FILE_ALIAS), columns=["tfID"])
-        assert isinstance(tfIDs, pd.DataFrame), f"tfIDs should be a numpy array, got {type(tfIDs)}"
-        tfIDs = np.sort(tfIDs).T[0]
-
-        dateID_to_tfid = dict(zip(dateIDs, tfIDs))
-
-        # nodeID_table for the entire dataset
-        nodeID_table = pd.read_parquet(get_parquet_path(c.NODE_ID_FILE_ALIAS))
-        assert isinstance(nodeID_table, pd.DataFrame), f"nodeID_table should be a pandas DataFrame, got {type(nodeID_table)}"
-
-        # corr edge
-        if not os.path.exists(c.CORR_EDGE_INFO_PATH):
-            corr_edge_info = self.pre_process()
-            torch.save(corr_edge_info, c.CORR_EDGE_INFO_PATH)
-        else:
-            corr_edge_info = torch.load(c.CORR_EDGE_INFO_PATH)
-
-        print('')
+        # These tools are used to thier relevant job
+        date_tools = self.conn.execute("SELECT * from tools.date_tool").fetchdf()
+        node_tools = self.conn.execute("SELECT * from tools.node_tool").fetchdf()
 
         # Set up the entire_data dictionary
-        for edge_type in c.HETERO_EDGE_DICT.keys():
+        global_edges = h.get_global_edges(self.conn, self.pre_process())
+        global_nodes = h.get_global_nodes(self.conn)
 
-            node1_type, node2_type = c.HETERO_EDGE_DICT[edge_type]
-            
-            if edge_type == "corr":
-                edge_index, observable, edge_attr = corr_edge_info
-            else:
-                edge_df = pd.read_parquet(get_parquet_path(edge_type))
-
-                ### FILTERING
-                edge_df = edge_df[edge_df["dateID"] <= c.MAX_DATEID]  # Filter by c.MAX_DATEID
-                ###
-
-                edge_index = edge_df[[f"{node1_type}_codeID", f"{node2_type}_codeID"]].values.T
-                observable = edge_df["dateID"].values
-                edge_attr  = np.ones(edge_index.shape[1], dtype=c.NP_FLOAT32)  # Placeholder for edge attributes
-
-                del edge_df  # Free memory
-
-            edge_type_ij  = np.full(edge_index.shape[1], c.HETERO_EDGE_ID[edge_type],  dtype=c.NP_INT32)
-            node_type_i   = np.full(edge_index.shape[1], c.HETERO_NODE_ID[node1_type], dtype=c.NP_INT32)
-            node_type_j   = np.full(edge_index.shape[1], c.HETERO_NODE_ID[node2_type], dtype=c.NP_INT32)
-                
-            entire_edges[edge_type] = {
-                'edge_index': edge_index,
-                'observable': observable,
-                'edge_attr': edge_attr,
-                'edge_type_ij': edge_type_ij,
-                'node_type_i': node_type_i,
-                'node_type_j': node_type_j,
-            }
-            print(f'Finished processing edge_type: {edge_type}')
-
-        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-
-        for node_type in c.HETERO_NODE_TYPES:
-            node_df = pd.read_parquet(get_parquet_path(node_type))
-            node_nodeID = node_df.loc[:, "nodeID"].to_numpy(dtype=c.NP_INT32)
-            node_codeID = node_df.loc[:, "codeID"].to_numpy(dtype=c.NP_INT32)
-            node_dateID = node_df.loc[:, "dateID"].to_numpy(dtype=c.NP_INT32)
-            node_features = node_df.values.astype(c.NP_FLOAT32)
-            node_type_id = np.full(node_nodeID.shape[0], c.HETERO_NODE_ID[node_type], dtype=c.NP_FLOAT32)
-            del node_df  # Free memory
-
-            entire_nodes[node_type] = {
-                'nodeID': node_nodeID,
-                'codeID': node_codeID,
-                'observable': node_dateID,
-                'features': node_features,
-                'node_type': node_type_id
-            }
-            print(f'Finished processing node_type: {node_type}')
-        
-        returns = pd.read_parquet(get_parquet_path(c.RETURN_FILE_ALIAS))
+        # Set up labels for eval nodes
+        returns = self.conn.execute("select * from labels.mv3").fetchdf()
         set_labels(returns)  # Set labels for the returns DataFrame
 
         # Create HeteroData objects for each dateID
-        for i, (dateID, tfID) in enumerate(dateID_to_tfid.items(), 1):
-            if tfID < c.USE_MIN_TFID or tfID > c.USE_MAX_TFID:
-                continue  # Skip dateIDs outside the specified range
+        for i, tID in enumerate(date_tools.loc[:, 'tID'], 1):
+            if tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID: continue
+
+            # Initialize a new HeteroData.
             data = HeteroData()
 
-            for edge_type, edge_info in entire_edges.items():
-                edge_index   = edge_info['edge_index']  # shape: [2, num_edges]
-                edge_attr    = edge_info['edge_attr']   # Edge thickness
-                edge_type_ij = edge_info['edge_type_ij'] # Edge type ID
-                node_type_i  = edge_info['node_type_i'] # Node type ID for source node
-                node_type_j  = edge_info['node_type_j'] # Node type ID for target node
-                observable   = edge_info['observable']  # Date IDs for edges
+            # Set edges for the current tID
+            h.set_edge_HeteroData(data, tID, global_edges)
 
-                node1_type, node2_type = c.HETERO_EDGE_DICT[edge_type]
+            # Pick up nodes by HGTsampling
+            # Also, HGTsampling filter edges corresponding to the sampled nodes
+            init_OS = returns.loc[returns['tIDs'] == tID, 'cID'].to_list()
+            HGTsampling(data, init_OS, L=2, n=20, display=False)
 
-                idx = np.where(observable == dateID)[0]
-                data[node1_type, edge_type, node2_type].edge_index   = torch.as_tensor(edge_index[:, idx], dtype=c.TORCH_LONG).cpu()
-                data[node1_type, edge_type, node2_type].edge_attr    = torch.as_tensor(edge_attr[idx]    , dtype=c.TORCH_FLOAT32).cpu()
-                data[node1_type, edge_type, node2_type].edge_type_ij = torch.as_tensor(edge_type_ij[idx] , dtype=c.TORCH_INT32).cpu()
-                data[node1_type, edge_type, node2_type].node_type_i  = torch.as_tensor(node_type_i[idx]  , dtype=c.TORCH_INT32).cpu()
-                data[node1_type, edge_type, node2_type].node_type_j  = torch.as_tensor(node_type_j[idx]  , dtype=c.TORCH_INT32).cpu()
-
-            # TODO: insert HGT-sampling here
-            output_node_set = returns.loc[returns['dateID'] == dateID, 'codeID'].to_list()
-            iter_OS = HGTsampling(data, output_node_set, L=2, n=20)
-
-            # print("sampling result")
-            # for node_type, sampled_codeIDs in iter_OS.items(): 
-            #     print(node_type, len(sampled_codeIDs))
-            
-            
-            nt2id = {'stock':0, 'statement':1, 'mktIdx':2, 'future':3}
-
-            for node_type, node_info in entire_nodes.items():
-                codeID = node_info['codeID']
-                observable = node_info['observable']
-                features = node_info['features']
-                node_type_id = node_info['node_type']
-
-                if node_type == "stock":
-                    target_codeID= returns.loc[returns['dateID'] == dateID, 'codeID']
-                    assert isinstance(target_codeID, pd.Series), f"Expected target_codeID to be a numpy array, got {type(target_codeID)}"
-                    target_idx = np.isin(codeID[observable == dateID], target_codeID).astype(c.NP_INT32)
-                    del target_codeID  # Free memory
-                    data[node_type].target = torch.as_tensor(target_idx, dtype=c.TORCH_INT32).cpu()
-                    data[node_type].labels = torch.as_tensor(returns.loc[returns['dateID'] == dateID, ['neg', 'neu', 'pos']].values, dtype=c.TORCH_FLOAT32).cpu()
-                else:
-                    target_idx = np.zeros(codeID[observable == dateID].shape[0], dtype=c.NP_INT32)
-                    data[node_type].target = torch.as_tensor(target_idx, dtype=c.TORCH_INT32).cpu()
-                del target_idx  # Free memory
-
-                using_codeIDs = iter_OS[nt2id.get(node_type, None)] if nt2id.get(node_type, None) in iter_OS.keys() else []
-                mask_sampling = (observable == dateID) & (np.isin(codeID, using_codeIDs))
-
-                data[node_type].codeID = torch.as_tensor(codeID[mask_sampling], dtype=c.TORCH_INT32).cpu()
-                data[node_type].node_type = torch.as_tensor(node_type_id[mask_sampling], dtype=c.TORCH_INT32).cpu()
-
-                if node_type in ["stock", "mktIdx", "future"]:
-                    # LIMITING the features to the GRU_WINDOW_SIZE
-                    mask_extract = (features[:, c.O_DATEID_COL_ID] <= dateID) & (tfID - features[:, c.O_TFID_COL_ID] < c.GRU_WINDOW_SIZE)
-                if node_type in ["statement"]:
-                    # LIMITING the features to the NUM_OCCUR_WINDOW_SIZE
-                    mask_extract = get_occurence_mask(nodeID_table, node_type, dateID, c.NUM_OCCUR_WINDOW_SIZE)
-
-                mf = features[mask_extract]
-
-                # for each codeID, thier sequential features are sorted by tfID
-                # it use to get embedding from GRU or attention
-                seq_list = []
-                for cid in data[node_type].codeID.numpy():
-                    mf_c = mf[mf[:, c.O_CODEID_COL_ID] == cid]
-                    mf_c = mf_c[np.argsort(mf_c[:, c.O_TFID_COL_ID], kind="stable")]
-                    seq_list.append(
-                        torch.from_numpy(
-                            np.ascontiguousarray(mf_c[:, c.O_MAINDATA_START_ID:], dtype=c.NP_FLOAT32)
-                        )
-                    )
-
-                if seq_list:
-                    data[node_type].x = pad_sequence(seq_list, batch_first=True, padding_value=0.0).cpu()
-                    data[node_type].seq_len = torch.tensor([s.shape[0] for s in seq_list], dtype=c.TORCH_LONG).cpu()
-                else:
-                    data[node_type].x = torch.empty((0, 0, 0), dtype=c.TORCH_FLOAT32).cpu()
-                    data[node_type].seq_len = torch.empty((0,), dtype=c.TORCH_LONG).cpu()
+            # Set sampled nodes for the current tID
+            h.set_node_HeteroData(data, tID, global_nodes, node_tools)
                 
-            torch.save(data, os.path.join(self.processed_dir, f'data_{tfID}.pt'))
-            print(f'\rtfID: {tfID},  {i}/{c.USE_MAX_TFID}', end='')
-        print("\nFinished processing all dateIDs.")
+            torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
+            print(f'\rtID: {tID},  {i}/{c.USE_MAX_TFID}', end='')
+        print("\ncreated Graph Objects over all tIDs.")
 
     def len(self):
         return len(self.processed_file_names)
 
-    def get(self, tfID:int) -> HeteroData:
+    def get(self, tID:int) -> HeteroData:
         """
-        Get a HeteroData object by its TFID.
+        Get a HeteroData object by its tID.
         """
-        # print(f"Fetching data for tfID: {tfID}")
-        if tfID < c.USE_MIN_TFID or tfID > c.USE_MAX_TFID:
+        # print(f"Fetching data for tID: {tID}")
+        if tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID:
             raise IndexError("Index out of range")
     
-        data_path = os.path.join(self.processed_dir, f'data_{tfID}.pt')
+        data_path = os.path.join(self.processed_dir, f'data_{tID}.pt')
         data = torch.load(data_path, weights_only=False)
         return data

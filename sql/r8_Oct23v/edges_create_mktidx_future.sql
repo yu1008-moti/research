@@ -43,7 +43,8 @@ edge as (
         m.lnID as mktidx_lnID, 
         m.cID  as mktidx_cID,
         m.ntID as mktidx_ntID,
-        1      as attr
+        1      as attr,
+        6      as etID
     from mkt as m
     join ftr as f
     on m.tradeDate = f.tradeDate 
@@ -53,4 +54,4 @@ select * from edge order by tradeDate, future_gnID, mktidx_gnID
 );
 
 -- return Lv_1;
--- create or replace table edges.recent_report as (select * from Lv_1 order by tradeDate, stock_gnID, statement_gnID);
+-- create or replace table edges.mktidx_future as (select * from Lv_1 order by tradeDate, mktidx_gnID, future_gnID);

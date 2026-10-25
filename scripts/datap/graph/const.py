@@ -8,7 +8,7 @@ NUM_LABELS = 3  # Assuming 3 classes for classification
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MAX_DATEID = 6554 # include this dateID
+MAX_TID = 4392 # include this dateID
 
 # select * from '..\parquet\dateID.parquet' where TradeDate in [cast('2015-01-05' as DATE), cast('2025-12-30' as DATE)];
 # ┌───────┬────────────┬────────┬───────┬───────┐
@@ -23,52 +23,65 @@ USE_MAX_TFID = 4321 # means 2025-12-30
 
 PARQUET_DISR = Path("db/parquet")
 
-CORR_EDGE_INFO_PATH = Path("scripts/datap/graph/processed/corr_edge_info.pt")
+CORR_EDGE_INFO_PATH = Path("scripts/datap/graph/processed/corr_edge_info.npz")
 
 
 # address: 0 is center (*_i), 1 is neighbor (*_j)
-HETERO_EDGE_DICT: Dict[str, Tuple[str, str]] = {
+HETERO_EDGE_UNIT: Dict[str, Tuple[str, str]] = {
     "corr"          : ('stock' , 'stock'),
-    "made_up_Mkt"   : ('stock' , 'mktIdx'),
-    "made_up_topix" : ('stock' , 'mktIdx'),
-    "made_up_s33"   : ('stock' , 'mktIdx'),
-    "made_up_s17"   : ('stock' , 'mktIdx'),
+    "made_up_mkt"   : ('stock' , 'mktidx'),
+    "made_up_topix" : ('stock' , 'mktidx'),
+    "made_up_s33"   : ('stock' , 'mktidx'),
+    "made_up_s17"   : ('stock' , 'mktidx'),
     "recent_report" : ('stock' , 'statement'),
-    "index_future"  : ('mktIdx', 'future')
+    "index_future"  : ('mktidx', 'future')
 }
 
 HETERO_NODE_TYPES: List[str] = [
     'stock',
     'statement',
-    'mktIdx',
+    'mktidx',
     'future'
 ]
 
+HETERO_EDGE_TYPES: List[str] = [
+    'corr',
+    'made_up_mkt',
+    'made_up_topix',
+    'made_up_s33',
+    'made_up_s17',
+    'recent_report',
+    'index_future'
+]
+
 HETERO_EDGE_ID: Dict[str, int] = {
-    "corr"          : 0,
-    "made_up_Mkt"   : 1,
-    "made_up_topix" : 2,
-    "made_up_s33"   : 3,
-    "made_up_s17"   : 4,
-    "recent_report" : 5,
-    "index_future"  : 6
+    'corr'          : 0,
+    'made_up_mkt'   : 1,
+    'made_up_topix' : 2,
+    'made_up_s33'   : 3,
+    'made_up_s17'   : 4,
+    'recent_report' : 5,
+    'index_future'  : 6
 }
 
 HETERO_NODE_ID: Dict[str, int] = {
-    "stock"        : 0,
-    "statement"    : 1,
-    "mktIdx"       : 2,
-    "future"       : 3 
+    'stock'    : 0,
+    'statement': 1,
+    'mktidx'   : 2,
+    'future'   : 3
 }
 
 # select count(*)-4 as num_cols from (describe '.\*\*.parquet');
 # "4" means "tfID", "codeID", "dateID", "nodeID" columns
-NODE_TYPE_CFG: Dict[str, int] = {
-    "stock"        : 16,
-    "statement"    : 60,
-    "mktIdx"       : 4,
-    "future"       : 16
+NODE_TYPE_INPUT_NUM: Dict[str, int] = {
+    "stock"        : 5,
+    "statement"    : 19,
+    "mktidx"       : 4,
+    "future"       : 6
 }
+
+# 0: tID, 1: elpDs, 2: gnID, 3: lnID, 4: cID, 5:ntID, 6~ : feats
+NODE_FEATS_HEAD_IDX = 6
 
 # <duckdb side processing>
 # dateID is limited to 6554 (SQL: ... where dateID < 6555)
@@ -98,7 +111,7 @@ N_NODEID_COL_ID = 3
 N_NUMOCCUR_COL_ID = 4
 
 # other *.parquet
-O_TFID_COL_ID = 0
+O_TID_COL_ID = 0
 O_DATEID_COL_ID = 1
 O_CODEID_COL_ID = 2
 O_NODEID_COL_ID = 3
@@ -115,8 +128,8 @@ EDGE_TYPE = 'corr'
 JENSEN_ALPHA = 'const'
 BETA = 0
 
-START_IDX = 0
-END_IDX = 1
+START_idX = 0
+END_idX = 1
 # reference: duckdb side processing
 TRAIN_RANGE_BY_DATEID = (1334, 5351) # (2015-01-05, 2022-12-30)
 VALID_RANGE_BY_DATEID = (5356, 5715) # (2023-01-04, 2023-12-29)
@@ -147,3 +160,5 @@ NP_INT32 = np.int32
 TORCH_FLOAT32 = torch.float32
 TORCH_INT32 = torch.int32
 TORCH_LONG = torch.long
+
+DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")

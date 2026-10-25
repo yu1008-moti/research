@@ -37,11 +37,11 @@ class MarketHGTConv(MessagePassing):
         glorot(self.W_msg)
 
     
-    def forward(self, x, edge_index, node_type, edge_type):
+    def forward(self, x, edge_index, ntIDs, etIDs):
         # x has shape [N, in_hid]
-        self.propagate(edge_index, x=x, node_type=node_type, edge_type=edge_type)
+        self.propagate(edge_index, x=x, ntIDs=ntIDs, etIDs=etIDs)
 
-    def message(self, x_i, x_j, node_type_i, node_type_j, edge_type_ij, device):
+    def message(self, x_i, x_j, ntIDs_i, ntIDs_j, etIDs, device):
         # x_j has shape [E, in_hid]
         # i : center node
         # j : neighbor node
@@ -51,12 +51,12 @@ class MarketHGTConv(MessagePassing):
         res_att = torch.zeros(x_i.size(0), self.num_head, device)
         res_msg = torch.zeros(x_i.size(0), self.num_head, self.d_k, device)
 
-        for i, target_node_type in enumerate(NODE_TYPES):
-            target_idx = (node_type_i == target_node_type)
-            for j, source_node_type in enumerate(NODE_TYPES):
-                source_idx = (node_type_j == source_node_type)
-                for r, rel_type in enumerate(EDGE_TYPES):
-                    rel_idx = (edge_type_ij == rel_type)
+        for i, tgt_ntID in enumerate(NODE_TYPES):
+            target_idx = (ntIDs_i == tgt_ntID)
+            for j, src_ntID in enumerate(NODE_TYPES):
+                source_idx = (ntIDs_j == src_ntID)
+                for r, etID in enumerate(EDGE_TYPES):
+                    rel_idx = (etIDs == etID)
                     edge_idx = target_idx & source_idx & rel_idx
                     
                     if sum(edge_idx) == 0:

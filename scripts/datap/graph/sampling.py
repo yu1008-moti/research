@@ -33,31 +33,33 @@ INIT_OS_KEY = 0
 __all__ = ['HGTsampling']
 
 def str2id(ch:str) -> EdgeTypeID|NodeTypeID:
-    if ch in c.HETERO_NODE_ID:
+    if ch in c.HETERO_NODE_TYPES:
         return c.HETERO_NODE_ID[ch]
-    elif ch in c.HETERO_EDGE_ID:
+    elif ch in c.HETERO_EDGE_TYPES:
         return c.HETERO_EDGE_ID[ch]
     else:
         raise ValueError(f"Unknown node or edge type: {ch}")
 
-def n_id2type(id:int) -> str:
+def ntID2str(id:int) -> str:
     if id in c.HETERO_NODE_ID.values():
-        return list(c.HETERO_NODE_ID.keys())[list(c.HETERO_NODE_ID.values()).index(id)]
+        res = list(c.HETERO_NODE_ID.keys())[id]
+        return res
     else:
         raise ValueError(f"Unknown node or edge type ID: {id}")
 
-def e_id2type(id:int):
+def etID2str(id:int):
     if id in c.HETERO_EDGE_ID.values():
-        return list(c.HETERO_EDGE_ID.keys())[list(c.HETERO_EDGE_ID.values()).index(id)]
+        res = list(c.HETERO_EDGE_ID.keys())[id]
+        return res
     else:
         raise ValueError(f"Unknown edge type ID: {id}")
 
-def Add_In_Budget(budget:Budget, smpl_tgt_cid:int, smpl_tgt_tid:int, A:AdjacencyMatrix, NS:NeighborSet, n:int) -> None:
+def Add_In_Budget(budget:Budget, smpl_tgt_lnID:int, smpl_tgt_ntID:int, A:AdjacencyMatrix, NS:NeighborSet, n:int) -> None:
     for src_tid in list(A.keys()):
         for edge_tid in list(A[src_tid].keys()):
-            if smpl_tgt_cid not in A[src_tid][edge_tid][smpl_tgt_tid]:
+            if smpl_tgt_lnID not in A[src_tid][edge_tid][smpl_tgt_ntID]:
                 continue
-            all_tgt_ids = A[src_tid][edge_tid][smpl_tgt_tid][smpl_tgt_cid]
+            all_tgt_ids = A[src_tid][edge_tid][smpl_tgt_ntID][smpl_tgt_lnID]
             if len(all_tgt_ids) < n:
                 smpl_tgt_ids = all_tgt_ids
             else:
@@ -68,24 +70,24 @@ def Add_In_Budget(budget:Budget, smpl_tgt_cid:int, smpl_tgt_tid:int, A:Adjacency
                     budget[src_tid][smpl_tgt_id] += Dt
     return
 
-def HGTsampling(data:HeteroData, output_node_set:List[int], L:int, n:int) -> OutputSet:
+def HGTsampling(data:HeteroData, output_node_set:List[int], L:int, n:int, display:bool=False) -> None:
 
-    A:AdjacencyMatrix = defaultdict( # smpl_tid 
-        lambda: defaultdict( # edge_tid
-            lambda: defaultdict( # src_tid
-                lambda: defaultdict( # t_cid
-                    lambda: [] #s_cids
+    A:AdjacencyMatrix = defaultdict( # smpl_ntID 
+        lambda: defaultdict( # etID
+            lambda: defaultdict( # tgt_ntid
+                lambda: defaultdict( # t_lnid
+                    lambda: [] #s_lnids
                 )
             )
         )
     )
 
     # Initialize adjacency-Matrix A
-    for edge_tid, (tgt_tid, src_tid) in c.HETERO_EDGE_DICT.items():
-        t_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].edge_index[0]
-        s_code_ids:torch.Tensor = data[tgt_tid, edge_tid, src_tid].edge_index[1]
-        for t_cid, s_cid in zip(t_code_ids.tolist(), s_code_ids.tolist()):
-            A[str2id(src_tid)][str2id(edge_tid)][str2id(tgt_tid)][t_cid].append(s_cid)
+    for et, (tgt_nt, src_nt) in c.HETERO_EDGE_UNIT.items():
+        tgt_lnIDs:torch.Tensor = data[tgt_nt, et, src_nt].edge_index[0]
+        src_lnIDs:torch.Tensor = data[tgt_nt, et, src_nt].edge_index[1]
+        for tgt_lnID, src_lnID in zip(tgt_lnIDs.tolist(), src_lnIDs.tolist()):
+            A[str2id(src_nt)][str2id(et)][str2id(tgt_nt)][tgt_lnID].append(src_lnID)
         
     OS:OutputSet = defaultdict( # outpusmpl_tid
         lambda: [] # output_code_ids
@@ -96,8 +98,8 @@ def HGTsampling(data:HeteroData, output_node_set:List[int], L:int, n:int) -> Out
     )
 
     # Initialize the output node set OS with the provided output_node_set
-    for init_cid in output_node_set:
-        OS[INIT_OS_KEY].append(init_cid)
+    for init_lnID in output_node_set:
+        OS[INIT_OS_KEY].append(init_lnID)
 
     NS = OS # Initialize sampled node set as output node set
 
@@ -113,64 +115,67 @@ def HGTsampling(data:HeteroData, output_node_set:List[int], L:int, n:int) -> Out
         )
     )
 
-    for tgt_tids in list(NS.keys()):
-        for tgt_cid in NS[tgt_tids]:
-            Add_In_Budget(budget, tgt_cid, tgt_tids, A, NS, n)
+    for tgt_ntID in list(NS.keys()):
+        for tgt_lnID in NS[tgt_ntID]:
+            Add_In_Budget(budget, tgt_lnID, tgt_ntID, A, NS, n)
     
     for l in range(L):
-        for smpl_src_tid in list(budget.keys()):
+        for smpl_src_ntID in list(budget.keys()):
 
             # Compute sampling probabilities for each node in Budget
-            for s_cid in budget[smpl_src_tid]:
-                Prob[smpl_src_tid][s_cid] = budget[smpl_src_tid][s_cid]**2
+            for src_lnID in budget[smpl_src_ntID]:
+                Prob[smpl_src_ntID][src_lnID] = budget[smpl_src_ntID][src_lnID]**2
 
             # Normalize Probabilities
-            prob_sum = sum(Prob[smpl_src_tid].values())
-            for s_cid in Prob[smpl_src_tid]:
-                Prob[smpl_src_tid][s_cid] /= prob_sum
+            prob_sum = sum(Prob[smpl_src_ntID].values())
+            for src_lnID in Prob[smpl_src_ntID]:
+                Prob[smpl_src_ntID][src_lnID] /= prob_sum
 
             # Sample n nodes from Budget using Prob
             sampled_ids = np.random.choice(
-                list(Prob[smpl_src_tid].keys()), 
-                size=min(n, len(Prob[smpl_src_tid])), 
+                list(Prob[smpl_src_ntID].keys()), 
+                size=min(n, len(Prob[smpl_src_ntID])), 
                 replace=False, 
-                p=list(Prob[smpl_src_tid].values())
+                p=list(Prob[smpl_src_ntID].values())
             )
 
-            samples_keys = np.array(list(budget[smpl_src_tid].keys()))
+            samples_keys = np.array(list(budget[smpl_src_ntID].keys()))
 
             # Create a new sampled node set NS for the current iteration
             NS = defaultdict( # src_tid
                 lambda: [] # s_code_ids
             )
 
-            for s_cid in sampled_ids:
-                NS[smpl_src_tid].append(s_cid)
+            for src_lnID in sampled_ids:
+                NS[smpl_src_ntID].append(src_lnID)
 
 
-            for smpl_src_cid in samples_keys:
+            for smpl_src_lnID in samples_keys:
 
                 # Add sampled node into OS
-                OS[smpl_src_tid].append(smpl_src_cid)
+                OS[smpl_src_ntID].append(smpl_src_lnID)
 
                 # Add neighbors of t to Budget
-                Add_In_Budget(budget, smpl_src_cid, smpl_src_tid, A, NS, n)
+                Add_In_Budget(budget, smpl_src_lnID, smpl_src_ntID, A, NS, n)
 
                 # Remove sampled node t from Budget
-                budget[smpl_src_tid].pop(smpl_src_cid)
+                budget[smpl_src_ntID].pop(smpl_src_lnID)
 
     # Reconstruct the sampled adjacnecy matrix ~A among the sampled nodes OS from A
-    for edge_tid, (tgt_tid, src_tid) in c.HETERO_EDGE_DICT.items():        
+    for et, (tgt_nt, src_nt) in c.HETERO_EDGE_UNIT.items():        
 
-        mask_i = data[tgt_tid, edge_tid, src_tid].node_type_i.apply_(lambda codeID: codeID in OS[str2id(tgt_tid)])
-        mask_j = data[tgt_tid, edge_tid, src_tid].node_type_j.apply_(lambda codeID: codeID in OS[str2id(src_tid)])
+        mask_i = data[tgt_nt, et, src_nt].edge_index[0].apply_(lambda lnID: lnID in OS[str2id(tgt_nt)])
+        mask_j = data[tgt_nt, et, src_nt].edge_index[1].apply_(lambda lnID: lnID in OS[str2id(src_nt)])
 
         mask = mask_i & mask_j
 
-        data[tgt_tid, edge_tid, src_tid].edge_index   = data[tgt_tid, edge_tid, src_tid].edge_index[:, mask]
-        data[tgt_tid, edge_tid, src_tid].edge_attr    = data[tgt_tid, edge_tid, src_tid].edge_attr[mask]
-        data[tgt_tid, edge_tid, src_tid].edge_type_id = data[tgt_tid, edge_tid, src_tid].edge_type_id[mask]
-        data[tgt_tid, edge_tid, src_tid].node_type_i  = data[tgt_tid, edge_tid, src_tid].node_type_i[mask]
-        data[tgt_tid, edge_tid, src_tid].node_type_j  = data[tgt_tid, edge_tid, src_tid].node_type_j[mask]
+        data[tgt_nt, et, src_nt].edge_index   = data[tgt_nt, et, src_nt].edge_index[:, mask]
+        data[tgt_nt, et, src_nt].attr    = data[tgt_nt, et, src_nt].attr[mask]
+        data[tgt_nt, et, src_nt].etIDs = data[tgt_nt, et, src_nt].etIDs[mask]
 
-    return OS
+    if display:
+        print("sampling result")
+        for ntID, smpl_lnIDs in OS.items(): 
+            print(ntID, len(smpl_lnIDs))
+
+    return

@@ -31,15 +31,15 @@ def _get_indices_values(corr: torch.Tensor, mask: torch.Tensor):
 def _calc_residuals(capm_data: pd.DataFrame):
 
     capm_data['residual'] = np.nan  # Initialize the residual column with NaN values
-    capm_data['beta'] = np.nan  # Initialize the beta column with NaN values
-    capm_data['alpha'] = np.nan  # Initialize the alpha column with NaN values
+    capm_data['beta']     = np.nan  # Initialize the beta column with NaN values
+    capm_data['alpha']    = np.nan  # Initialize the alpha column with NaN values
 
     short_length_codes = []
     
     for code in capm_data['codeID'].unique():
         df:pd.DataFrame = capm_data[capm_data['codeID'] == code]
-        X = df['rm'] - df['rf'] # market return
-        y = df['ri'] - df['rf'] # stock return
+        X = df['Rm'] # market return
+        y = df['Ri'] # stock return
 
         assert len(X) == len(y), f"Length mismatch: X has {len(X)} rows, y has {len(y)} rows"
 
@@ -51,7 +51,7 @@ def _calc_residuals(capm_data: pd.DataFrame):
         else:
             X = sm.add_constant(data=X)
             result = RollingOLS(endog=y, exog=X, window=min(c.DEFAULT_WINDOW_SIZE, len(X))).fit()
-            pred_y = result.params[c.JENSEN_ALPHA] + result.params[c.BETA] * df['rm'] # y'= α + βx
+            pred_y = result.params[c.JENSEN_ALPHA] + result.params[c.BETA] * df['Rm'] # y'= α + βx
             
             capm_data.loc[df.index, 'residual'] = y - pred_y # r = y - y'
             capm_data.loc[df.index, 'alpha']    = result.params[c.JENSEN_ALPHA] # α
@@ -75,15 +75,15 @@ def _calc_corr_matrix(pivot_tensor: torch.Tensor):
         corr = cov / torch.outer(std, std)
         corr = torch.nan_to_num(corr, nan=0.0) 
         corr.fill_diagonal_(0)
-        # mask = torch.abs(corr) > c.THRESHOLD
-        mask = corr > c.CORR_THRESHOLD
+        mask = torch.abs(corr) > c.CORR_THRESHOLD
+        # mask = corr > c.CORR_THRESHOLD
 
         edge_indices, edge_values = _get_indices_values(corr, mask)
 
         assert edge_indices.shape[0] == 2
         assert edge_indices.shape[1] == edge_values.shape[0]
 
-        yield t, edge_indices, edge_values
+        yield pivot_tensor[t], edge_indices, edge_values
 
         x_new = pivot_tensor[t]
         x_old = pivot_tensor[t - c.DEFAULT_WINDOW_SIZE]
@@ -92,33 +92,37 @@ def _calc_corr_matrix(pivot_tensor: torch.Tensor):
 
 ################## ROLLING OLS AND CORRELATION CALCULATION ##################
 
-def get_corr_edge(capm_data: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def get_corr_edge(capm_data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
 
-    capm_data = capm_data.sort_values(by=['dateID', 'codeID']).reset_index(drop=True)
+    capm_data = capm_data.sort_values(by=['tID', 'cID']).reset_index(drop=True)
 
     _calc_residuals(capm_data) 
 
-    return_matrix = capm_data.pivot(index='dateID', columns='codeID', values='residual')
+    return_matrix = capm_data.pivot(index='tID', columns='cID', values='residual')
     pivot_tensor = torch.tensor(
         return_matrix.values,
         dtype=torch.float32,
         device=c.DEVICE
     )
+    tIDs = return_matrix.index.to_numpy()
+    cID2lnID = capm_data.loc[:, ['tID', 'cID', 'lnID']].drop_duplicates()
 
-    dateIDList:List[int] = return_matrix.index.values.tolist()
-    edge_indices_list, edge_values_list, observable_list = [], [], []
-    codeID_i_list, codeID_j_list = [], []
+    edge_index_list, attr_list, tIDs_list = [], [], []
 
     for i, (t, edge_indices, edge_values) in enumerate(_calc_corr_matrix(pivot_tensor), 1):
-        edge_indices_list.append(edge_indices)
-        edge_values_list.append(edge_values)
-        observable_list.append(torch.full((edge_values.shape[0],), dateIDList[t], dtype=torch.int16))
+        t = tIDs[t]
+        cID2lnID_t = cID2lnID.loc[cID2lnID['tID'] == t, :].set_index('cID')['lnID'].to_dict()
+        edge_indices = np.vectorize(cID2lnID_t.get)(edge_indices.cpu().numpy())
 
-        print(f"\r{i}/{len(dateIDList)}: {dateIDList[t]}", end='')
+        edge_index_list.append(edge_indices)
+        attr_list.append(edge_values)
+        tIDs_list.append(torch.full((edge_values.shape[0],), t, dtype=torch.int16))
+
+        print(f"\r{i}/{len(tIDs)}: {t}", end='')
     print("\nFinished")
 
-    edge_index = torch.cat(edge_indices_list, dim=1).to(torch.long).cpu()
-    edge_attr  = torch.cat(edge_values_list, dim=0).to(torch.float32).cpu()
-    dateIDs = torch.cat(observable_list, dim=0).to(torch.int16).cpu()
+    edge_index = torch.cat(edge_index_list, dim=1).to(torch.long).cpu().numpy()
+    edge_attr  = torch.cat(attr_list, dim=0).to(torch.float32).cpu().numpy()
+    tIDs = torch.cat(tIDs_list, dim=0).to(torch.int16).cpu().numpy()
 
-    return edge_index, dateIDs, edge_attr
+    return edge_index, tIDs, edge_attr

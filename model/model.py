@@ -1,5 +1,6 @@
 import model.conv as conv
 import scripts.datap.graph.const as c
+from itertools import compress
 
 from torch import nn
 import torch
@@ -19,16 +20,15 @@ class Classifier(nn.Module):
         return self.classifier(x)
 
 class myGRU(nn.Module):
-    def __init__(self, hidden_size: int, node_type_cfg: Dict[str, int], bidirectional: bool = False):
+    def __init__(self, hidden_size: int, bidirectional: bool = False):
         super().__init__()
-        self.node_type_cfg = node_type_cfg
+        self.node_type_input_num = c.NODE_TYPE_INPUT_NUM
         self.hidden_size = hidden_size
         self.bidirectional = bidirectional
         
-        self.linear_layers = nn.ModuleDict({
-            node_type: nn.Linear(in_dim*2, hidden_size) 
-            for node_type, in_dim in node_type_cfg.items()
-        })
+        self.linear_layers = nn.ModuleList([
+            nn.Linear(hidden_size*2, hidden_size)
+        ])
 
         self.GRUs = nn.ModuleList([
             nn.GRU(
@@ -37,53 +37,47 @@ class myGRU(nn.Module):
                 batch_first=True,
                 bidirectional=bidirectional
             ) 
-            for in_dim in self.node_type_cfg.values()
+            for in_dim in self.node_type_input_num.values()
         ])
 
-    def forward(self, x, seq_len, x_node_types):
+    def forward(self, x:List[torch.Tensor], seq_len, ntIDs) -> torch.Tensor:
 
-        # assert len(x) == x_node_types.size(0), "Mismatch in number of nodes and node types"
+        emb = torch.zeros(len(x), self.hidden_size, device=DEVICE)
 
-        emb = torch.zeros(len(x_node_types), self.hidden_size, device=DEVICE)
-        # x_node_types = torch.zeros(len(x_node_types), dtype=torch.long, device=DEVICE)  # Placeholder for node types
-        
-        idx_st = 0
-        idx_end = 0
-
-        for node_type in range(len(self.node_type_cfg)):
+        for ntID in c.HETERO_NODE_ID.values():
             # empty = seq_len[node_type] == 0
-            lens  = seq_len[node_type].clamp(min=1)
-            packed = pack_padded_sequence(
-                x[node_type], lens, batch_first=True, enforce_sorted=False
-            ).to(DEVICE)
-            idx_end += len(packed.sorted_indices) 
-            o_n, h_n = self.GRUs[node_type](packed)
+            lens = seq_len[ntID].clamp(min=1)
+            idx = ntIDs == ntID
+            x_nt = torch.cat(list(compress(x, idx.tolist())), dim=0).to(DEVICE)
+            packed = pack_padded_sequence(x_nt, lens, batch_first=True, enforce_sorted=False)
+            assert packed.sorted_indices is not None, "Packed sequence does not have sorted indices"
+            idx_end += len(packed.sorted_indices)
+            _, h_n = self.GRUs[ntID](packed) # return is (output, hidden-state), we only need the hidden state
             if self.bidirectional:
                 h = torch.cat([h_n[-2], h_n[-1]], dim=-1)
-                h = self.linear_layers[node_type](h)  # Apply linear layer to reduce dimension
+                h = self.linear_layers[ntID](h)  # Apply linear layer to reduce dimension
             else:
                 h = h_n[-1]
-            emb[idx_st:idx_end] = h
-            idx_st = idx_end
+            emb[idx] = h
 
         return emb
             
 
-class MarketHGTModel(nn.Module):#
+class MarketHGTModel(nn.Module):
     def __init__(
-            self, in_hid:int, out_hid:int, num_head:int, num_layers:int, dropout:float, node_type_cfg: Dict[str, int], bidirectional: bool = False):
+            self, in_hid:int, out_hid:int, num_head:int, num_layers:int, dropout:float, bidirectional: bool = False):
         super().__init__()
-        # 
-        self.gru = myGRU(out_hid, node_type_cfg, bidirectional)
+        
+        self.gru = myGRU(out_hid, bidirectional)
         self.hgt_conv = conv.GNNModel(in_hid, out_hid, num_head, num_layers, dropout)
         self.classifier = Classifier(out_hid)
 
-    def forward(self, x, seq_len, edge_index, node_type_i, node_type_j, edge_type_ij, target):
+    def forward(self, x:List[torch.Tensor], seq_len, edge_index, ntIDs: torch.Tensor, etIDs: torch.Tensor, target):
         # Pass through GRU
         # forward(self, x, seq_len, x_node_types):
-        x = self.gru(x, seq_len, node_type_i)  # Assuming node_type_i represents the node types for GRU
+        h = self.gru(x, seq_len, ntIDs)  # Assuming node_type_i represents the node types for GRU
         # Pass through HGTConv
-        x = self.hgt_conv(x, edge_index, node_type_i, node_type_j, edge_type_ij)
+        x = self.hgt_conv(h, edge_index, ntIDs, etIDs)
         
         # Pass through classifier
         return self.classifier(x, target)  # Assuming classifier takes x and target for loss computation

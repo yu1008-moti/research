@@ -28,18 +28,21 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
             
             optimizer.zero_grad()
 
-            x            = {NODENAME2NODEID.get(node_type, None): data[node_type].x       for node_type in c.HETERO_NODE_TYPES}
-            target       = {NODENAME2NODEID.get(node_type, None): data[node_type].target  for node_type in c.HETERO_NODE_TYPES}
-            seq_len      = {NODENAME2NODEID.get(node_type, None): data[node_type].seq_len for node_type in c.HETERO_NODE_TYPES}
-            
-            edge_index   = torch.cat([data[edge_type].edge_index   for edge_type in c.HETERO_EDGE_DICT.keys()], dim=1).to(c.DEVICE)
-            node_type_i  = torch.cat([data[edge_type].node_type_i  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
-            node_type_j  = torch.cat([data[edge_type].node_type_j  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
-            edge_type_ij = torch.cat([data[edge_type].edge_type_ij for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
-            
-            labels       = [data["stock"].labels]
+            # check order of lnIDs
+            lnIDs        = torch.cat([data[nt].lnIDs for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            assert sum(lnIDs[t] - (lnIDs[t-1] + 1) for t in range(1, len(lnIDs))) == 0, "lnIDs should be consecutive integers"
 
-            output = model(x, seq_len, edge_index, node_type_i, node_type_j, edge_type_ij, target)
+            x       = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
+            ntIDs   = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            target  = torch.cat([data[nt].target  for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            seq_len = torch.cat([data[nt].seq_len for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            
+            edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
+            etIDs  = torch.cat([data[edge_type].etIDs      for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
+            
+            labels = data["stock"].labels
+
+            output = model(x, seq_len, edge_index, ntIDs, etIDs, target)
 
             loss = LOSS_FN(output, labels)
             epock_train_losses.append(loss.item())
@@ -51,22 +54,27 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
         for idx in range(c.VALID_RANGE_BY_TFID[0], c.VALID_RANGE_BY_TFID[1] + 1):
 
             data = dataset.get(idx)
-
-            x            = torch.cat([data[node_type].x for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            target       = torch.cat([data[node_type].target for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            seq_len      = torch.cat([data[node_type].seq_len for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            codeID       = torch.cat([data[node_type].codeID for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            labels       = data["stock"].labels
             
-            edge_index   = torch.cat([data[edge_type].edge_index  for edge_type in c.HETERO_EDGE_DICT.keys()], dim=1).to(c.DEVICE)
-            node_type_i  = torch.cat([data[edge_type].node_type_i for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
-            node_type_j  = torch.cat([data[edge_type].node_type_j for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
-            edge_type_ij = torch.cat([data[edge_type].edge_type_ij for edge_type in c.HETERO_EDGE_DICT.keys()], dim=0).to(c.DEVICE)
+            optimizer.zero_grad()
 
-            output = model(x, edge_index, node_type_i, node_type_j, edge_type_ij, labels, target)
+            # check order of lnIDs
+            lnIDs        = torch.cat([data[nt].lnIDs for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            assert sum(lnIDs[t] - (lnIDs[t-1] + 1) for t in range(1, len(lnIDs))) == 0, "lnIDs should be consecutive integers"
+
+            x       = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
+            ntIDs   = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            target  = torch.cat([data[nt].target  for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            seq_len = torch.cat([data[nt].seq_len for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            
+            edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
+            etIDs  = torch.cat([data[edge_type].etIDs      for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
+            
+            labels = data["stock"].labels
+
+            output = model(x, seq_len, edge_index, ntIDs, etIDs, target)
 
             loss = LOSS_FN(output, labels)
-            epock_valid_losses.append(loss.item())
+            epock_train_losses.append(loss.item())
 
         valid_losses.append(sum(epock_valid_losses)/c.VALID_LENGTH)
 
@@ -94,7 +102,6 @@ if __name__ == "__main__":
         num_head      = args.num_head, 
         num_layers    = args.num_layer,
         dropout       = args.dropout,
-        node_type_cfg = c.NODE_TYPE_CFG,
         bidirectional  = False
     ).to(c.DEVICE)
 

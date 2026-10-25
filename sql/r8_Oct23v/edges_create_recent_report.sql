@@ -40,7 +40,8 @@ edge as (
         t.cID  as stock_cID,
         s.ntID as statement_ntID,
         t.ntID as stock_ntID,
-        1      as attr
+        1      as attr,
+        5      as etID
     from stk as t
     asof join stm as s
     on s.tradeDate <= t.tradeDate and s.cID = t.cID

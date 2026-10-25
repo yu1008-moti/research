@@ -1,9 +1,9 @@
 
 -- step 0.
 
-drop view if exists capm_tool;
-drop view if exists node_tool;
-drop view if exists date_tool;
+drop view if exists act.tools.capm_tool;
+drop view if exists act.tools.node_tool;
+drop view if exists act.tools.date_tool;
 
 create view if not exists act.tools.capm_tool as(
     select 
@@ -23,13 +23,21 @@ create view if not exists act.tools.capm_tool as(
 comment on view act.tools.capm_tool is 'used JGB-10CM as risk-free-rate(=Rf). Ri and Rm are already subtracted by Rf.';
 
 create view if not exists act.tools.node_tool as(
-    select * from dev.id.node
+    select 
+    t.tID,
+    * exclude(tradeDate)
+    from dev.id.node
+    join dev.id.date as t
+    on dev.id.node.tradeDate = t.tradeDate
 );
 
 comment on view act.tools.node_tool is 'used for mapping code to gnID, lnID, cID, ntID.';
 
 create view if not exists act.tools.date_tool as(
-    select * from dev.id.date
+    select 
+    tID,
+    * exclude(tID)
+    from dev.id.date
 );
 
 comment on view act.tools.date_tool is 'used for mapping tradeDate to tID and elpDs.';

@@ -58,7 +58,8 @@ edge as (
         t.lnID as stock_lnID, 
         t.cID  as stock_cID,
         t.ntID as stock_ntID,
-        1      as attr
+        1      as attr,
+        3      as etID
     from stk as t
     join mkt as m
     on m.tradeDate = t.tradeDate
@@ -116,7 +117,8 @@ edge as (
         t.lnID as stock_lnID, 
         t.cID  as stock_cID,
         t.ntID as stock_ntID,
-        1      as attr
+        1      as attr,
+        4      as etID
     from stk as t
     join mkt as m
     on m.tradeDate = t.tradeDate
@@ -170,7 +172,8 @@ edge as (
         t.lnID as stock_lnID, 
         t.cID  as stock_cID,
         t.ntID as stock_ntID,
-        1      as attr
+        1      as attr,
+        2      as etID
     from stk as t
     join mkt as m
     on m.tradeDate = t.tradeDate
@@ -225,7 +228,8 @@ edge as (
         t.lnID as stock_lnID, 
         t.cID  as stock_cID,
         t.ntID as stock_ntID,
-        1      as attr
+        1      as attr,
+        1      as etID
     from stk as t
     join mkt as m
     on m.tradeDate = t.tradeDate
@@ -233,3 +237,6 @@ edge as (
 )
 select * from edge order by tradeDate, stock_gnID, mktidx_gnID
 );
+
+-- return Lv_1_mkt;
+-- create or replace table edges.made_up_mkt as (select * from Lv_1_mkt order by tradeDate, stock_gnID, mktidx_gnID);
