@@ -162,4 +162,4 @@ TORCH_INT32 = torch.int32
 TORCH_LONG = torch.long
 
 ACT_DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")
-DEV_DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")
+DEV_DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.dev.duckdb")
