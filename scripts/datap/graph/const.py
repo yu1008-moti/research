@@ -161,4 +161,5 @@ TORCH_FLOAT32 = torch.float32
 TORCH_INT32 = torch.int32
 TORCH_LONG = torch.long
 
-DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")
+ACT_DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")
+DEV_DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")

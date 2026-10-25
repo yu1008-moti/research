@@ -73,8 +73,19 @@ class MarketDataset(Dataset):
         if os.path.exists(os.path.join(root, "processed")):
             print(f"Processed data found in {os.path.join(root, 'processed')}. Skipping processing.")
             self.undo = True
-        self.conn = sql.connect(database=c.DB_PATH, read_only=True)
-        super().__init__(root)
+        try:
+            self.conn = sql.connect()
+            self.conn.execute(f"attach '{c.ACT_DB_PATH}' as act;")
+            self.conn.execute(f"attach '{c.DEV_DB_PATH}' as dev;")
+            self.conn.execute(f"use act;")
+            super().__init__(root)
+        except Exception as e:
+            print(f"Error connecting to the database: {e}")
+            raise
+        finally:
+            if hasattr(self, 'conn'):
+                self.conn.close()
+        
 
     @property
     def raw_dir(self):
