@@ -23,18 +23,19 @@ USE_MAX_TFID = 4321 # means 2025-12-30
 
 PARQUET_DISR = Path("db/parquet")
 
+CAPM_DATA_FILE_PATH = Path("scripts/datap/graph/processed/capm_data.parquet")
 CORR_EDGE_INFO_PATH = Path("scripts/datap/graph/processed/corr_edge_info.npz")
 
 
 # address: 0 is center (*_i), 1 is neighbor (*_j)
 HETERO_EDGE_UNIT: Dict[str, Tuple[str, str]] = {
-    "corr"          : ('stock' , 'stock'),
-    "made_up_mkt"   : ('stock' , 'mktidx'),
-    "made_up_topix" : ('stock' , 'mktidx'),
-    "made_up_s33"   : ('stock' , 'mktidx'),
-    "made_up_s17"   : ('stock' , 'mktidx'),
-    "recent_report" : ('stock' , 'statement'),
-    "index_future"  : ('mktidx', 'future')
+    "corr"           : ('stock' , 'stock'),
+    "made_up_mkt"    : ('stock' , 'mktidx'),
+    "made_up_topix"  : ('stock' , 'mktidx'),
+    "made_up_s33"    : ('stock' , 'mktidx'),
+    "made_up_s17"    : ('stock' , 'mktidx'),
+    "recent_report"  : ('stock' , 'statement'),
+    "mktidx_future"  : ('mktidx', 'future')
 }
 
 HETERO_NODE_TYPES: List[str] = [
@@ -51,17 +52,17 @@ HETERO_EDGE_TYPES: List[str] = [
     'made_up_s33',
     'made_up_s17',
     'recent_report',
-    'index_future'
+    'mktidx_future'
 ]
 
 HETERO_EDGE_ID: Dict[str, int] = {
-    'corr'          : 0,
-    'made_up_mkt'   : 1,
-    'made_up_topix' : 2,
-    'made_up_s33'   : 3,
-    'made_up_s17'   : 4,
-    'recent_report' : 5,
-    'index_future'  : 6
+    'corr'           : 0,
+    'made_up_mkt'    : 1,
+    'made_up_topix'  : 2,
+    'made_up_s33'    : 3,
+    'made_up_s17'    : 4,
+    'recent_report'  : 5,
+    'mktidx_future'  : 6
 }
 
 HETERO_NODE_ID: Dict[str, int] = {
@@ -123,10 +124,10 @@ NUM_OCCUR_WINDOW_SIZE = 12
 
 # capm correlation calculation config
 DEFAULT_WINDOW_SIZE = GRU_WINDOW_SIZE  # Default window size for rolling regression
-CORR_THRESHOLD = 0.5  # Default threshold for correlation filtering
+CORR_THRESHOLD = 0.7 # Default threshold for correlation filtering
 EDGE_TYPE = 'corr'
 JENSEN_ALPHA = 'const'
-BETA = 0
+BETA = 'Rm'
 
 START_idX = 0
 END_idX = 1
@@ -161,5 +162,5 @@ TORCH_FLOAT32 = torch.float32
 TORCH_INT32 = torch.int32
 TORCH_LONG = torch.long
 
-ACT_DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")
-DEV_DB_PATH = Path("/db/synthesis/r8_Oct23v/r8_Oct23v.dev.duckdb")
+ACT_DB_PATH = Path("./db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")
+DEV_DB_PATH = Path("./db/synthesis/r8_Oct23v/r8_Oct23v.dev.duckdb")
