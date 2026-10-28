@@ -17,7 +17,7 @@ dependencies = [
     "cycler==0.12.1",
     "debugpy==1.8.20",
     "decorator==5.2.1",
-    "duckdb==1.5.3",
+    "duckdb==2.0.0",
     "executing==2.2.1",
     "filelock==3.32.0",
     "fonttools==4.62.1",
