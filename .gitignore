@@ -12,6 +12,7 @@
 **/*.pt
 **/*.json
 **/*.*.wal
+**/*.npz
 
 # Ignore all Jupyter Notebook files
 **/*.ipynb

@@ -198,12 +198,26 @@ Lv_3_3 as (
 select * from Lv_3_3
 );
 
+create temp table Lv_5 as (
+select 
+* 
+from (
+    select 
+    * 
+    from (
+        select 
+        *, row_number() over(partition by tradeDate, code order by CFO desc) as rn -- to eliminate error rows
+        from Lv_4 --dev.feats.statements
+    ) 
+where rn=1
+)
+);
 
 -- -- display results
-summarize select * from Lv_4;
+summarize select * from Lv_5;
 
 -- -- check
-select * from Lv_4 where code in ['97480'] order by code, tradeDate;
+select * from Lv_5 where code in ['97480'] order by code, tradeDate;
 
 -- return Lv_4;
 

@@ -25,10 +25,12 @@ comment on view act.tools.capm_tool is 'used JGB-10CM as risk-free-rate(=Rf). Ri
 create view if not exists act.tools.node_tool as(
     select 
     t.tID,
-    * exclude(tradeDate)
-    from dev.id.node
+    n.* exclude(tradeDate),
+    row_number() over(partition by n.ntID, n.cID order by t.tID) as occur_num
+    from dev.id.node as n
     join dev.id.date as t
-    on dev.id.node.tradeDate = t.tradeDate
+    on n.tradeDate = t.tradeDate
+    order by tID, ntID, lnID
 );
 
 comment on view act.tools.node_tool is 'used for mapping code to gnID, lnID, cID, ntID.';

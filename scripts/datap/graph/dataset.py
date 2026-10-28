@@ -14,52 +14,7 @@ import scripts.datap.graph.dataset_helper as h
 import os
 
 
-__all__ = ['MarketDataset', 'train_valid_eval_split']
-
-
-def get_parquet_path(name: str) -> Path:
-    return c.PARQUET_DISR / f"{name}.parquet"
-    
-def set_labels(return_df: pd.DataFrame) -> None:
-
-    train_mask = return_df['dateID'].between(c.TRAIN_RANGE_BY_DATEID[0], c.TRAIN_RANGE_BY_DATEID[1])
-    define_labels_samples = return_df[train_mask]
-    num_define_labels_samples = len(define_labels_samples)
-
-    q1 = int(num_define_labels_samples*1/3)
-    q2 = int(num_define_labels_samples*2/3)
-
-    sorted_returns = define_labels_samples.sort_values(by='return')
-    low_threshold = sorted_returns.iloc[q1]['return']
-    high_threshold = sorted_returns.iloc[q2]['return']
-
-    return_df['neg'] = (return_df['return'] < low_threshold).astype(int)
-    return_df['pos'] = (return_df['return'] > high_threshold).astype(int)
-    return_df['neu'] = ((return_df['return'] >= low_threshold) & (return_df['return'] <= high_threshold)).astype(int)
-
-    print("\nREPORT: Labeling of returns based on thresholds")
-    print(f"Number of samples used to define thresholds: {num_define_labels_samples}")
-    print(f"Label thresholds   : low={low_threshold}, high={high_threshold}")
-    print(f"Label distribution : neg={return_df['neg'].sum()}, pos={return_df['pos'].sum()}, neu={return_df['neu'].sum()}")
-    print(f'(%) neg : neu : pos = {return_df["neg"].sum()/len(return_df):.5%} : {return_df["neu"].sum()/len(return_df):.5%} : {return_df["pos"].sum()/len(return_df):.5%}\n')
-
-def train_valid_eval_split(data_list:List) -> Tuple[List[HeteroData], List[HeteroData], List[HeteroData]]:
-
-    dateID = pd.read_parquet(get_parquet_path(c.DATE_ID_FILE_ALIAS))
-
-    assert all(isinstance(data, HeteroData) for data in data_list), "All elements in data_list must be instances of HeteroData"
-
-    train_mask = dateID['dateID'].between(c.TRAIN_RANGE_BY_DATEID[0], c.TRAIN_RANGE_BY_DATEID[1])
-    valid_mask = dateID['dateID'].between(c.VALID_RANGE_BY_DATEID[0], c.VALID_RANGE_BY_DATEID[1])
-    eval_mask  = dateID['dateID'].between(c.EVAL_RANGE_BY_DATEID[0] , c.EVAL_RANGE_BY_DATEID[1])
-
-    del dateID  # Free memory
-
-    train_data = [data for i, data in enumerate(data_list) if train_mask.iloc[i]]
-    valid_data = [data for i, data in enumerate(data_list) if valid_mask.iloc[i]]
-    eval_data  = [data for i, data in enumerate(data_list) if eval_mask.iloc[i]]
-
-    return train_data, valid_data, eval_data
+__all__ = ['MarketDataset']
 
 
 class MarketDataset(Dataset):
@@ -74,7 +29,7 @@ class MarketDataset(Dataset):
             print(f"Processed data found in {os.path.join(root, 'processed')}. Skipping processing.")
             self.undo = True
         try:
-            self.conn = sql.connect()
+            self.conn = sql.connect(":memory:")
             self.conn.execute(f"attach '{c.ACT_DB_PATH}' as act;")
             self.conn.execute(f"attach '{c.DEV_DB_PATH}' as dev;")
             self.conn.execute(f"use act;")
@@ -85,15 +40,6 @@ class MarketDataset(Dataset):
         finally:
             if hasattr(self, 'conn'):
                 self.conn.close()
-        
-
-    @property
-    def raw_dir(self):
-        return Path(__file__).parent / "pt/raw"
-
-    @property
-    def raw_file_names(self):
-        pass
 
     @property
     def processed_file_names(self):
@@ -101,16 +47,22 @@ class MarketDataset(Dataset):
 
     def pre_process(self) -> Dict[str, np.ndarray]:
         # set "corr" edge
+        print("Pre-processing the 'corr' edge type...")
         if not os.path.exists(c.CORR_EDGE_INFO_PATH):
-            capm_data = self.conn.execute("SELECT * from tools.capm_data").fetchdf()
+            capm_data = self.conn.execute("SELECT * from tools.capm_tool;").df()
             edge_index, tIDs, attr = stock_corr_stock.get_corr_edge(capm_data)
             etID = np.full_like(tIDs, c.HETERO_EDGE_ID["corr"], dtype=c.NP_INT32)
             np.savez(c.CORR_EDGE_INFO_PATH, edge_index=edge_index, tIDs=tIDs, attr=attr, etID=etID)
             del capm_data  # Free memory
         else:
-            edge_index, tIDs, attr, etID = np.load(c.CORR_EDGE_INFO_PATH)
-        assert len(edge_index) == len(tIDs) == len(attr) == len(etID) == 0, "Expected empty arrays for corr_edge_info"
-        return {'edge_index': edge_index, 'tIDs': tIDs, 'attr': attr, 'etIDs': etID}
+            corr_info = np.load(c.CORR_EDGE_INFO_PATH)
+            edge_index = corr_info['edge_index']
+            tIDs = corr_info['tIDs'] # later, we use "tID" for dict key.
+            attr = corr_info['attr']
+            etID = corr_info['etID']
+            del corr_info  # Free memory
+        assert edge_index.shape[1] == len(tIDs) == len(attr) == len(etID) > 0, "The loaded edge data from 'corr_edge_info.npz' is inconsistent or empty."
+        return {'edge_index': edge_index, 'tID': tIDs, 'attr': attr, 'etID': etID}
 
     def process(self):
         
@@ -122,37 +74,43 @@ class MarketDataset(Dataset):
         global_nodes: Dict[int, Any] = {}
 
         # These tools are used to thier relevant job
-        date_tools = self.conn.execute("SELECT * from tools.date_tool").fetchdf()
-        node_tools = self.conn.execute("SELECT * from tools.node_tool").fetchdf()
+        print("Loading tools from the database...")
+        date_tools = self.conn.execute(f"SELECT * from tools.date_tool where tID < {c.MAX_TID};").df()
+        node_tools = self.conn.execute(f"SELECT * from tools.node_tool where tID < {c.MAX_TID};").df()
+        assert not date_tools.empty, "Date tools is empty. Please check the database."
+        assert not node_tools.empty, "Node tools is empty. Please check the database."
+        print("Tools loaded successfully.\n")
 
         # Set up the entire_data dictionary
         global_edges = h.get_global_edges(self.conn, self.pre_process())
         global_nodes = h.get_global_nodes(self.conn)
 
         # Set up labels for eval nodes
-        returns = self.conn.execute("select * from labels.mv3").fetchdf()
-        set_labels(returns)  # Set labels for the returns DataFrame
+        returns = self.conn.execute("SELECT * from labels.mv3;").df()
+        h.set_labels(returns)  # Set labels for the returns DataFrame
+
+        num_tIDs = len(date_tools.loc[:, 'tID'])
 
         # Create HeteroData objects for each dateID
+        print(f"Creating HeteroData objects for tIDs in range [{c.USE_MIN_TFID}, {c.USE_MAX_TFID}]...")
         for i, tID in enumerate(date_tools.loc[:, 'tID'], 1):
-            if tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID: continue
+            if not (tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID): 
+                # Initialize a new HeteroData.
+                data = HeteroData()
 
-            # Initialize a new HeteroData.
-            data = HeteroData()
+                # Set edges for the current tID
+                h.set_edge_HeteroData(data, tID, global_edges)
 
-            # Set edges for the current tID
-            h.set_edge_HeteroData(data, tID, global_edges)
+                # Pick up nodes by HGTsampling
+                # Also, HGTsampling filter edges corresponding to the sampled nodes
+                # init_OS = returns.loc[returns['tID'] == tID, 'cID'].to_list()
+                # HGTsampling(data, init_OS, L=2, n=20, display=False)
 
-            # Pick up nodes by HGTsampling
-            # Also, HGTsampling filter edges corresponding to the sampled nodes
-            init_OS = returns.loc[returns['tIDs'] == tID, 'cID'].to_list()
-            HGTsampling(data, init_OS, L=2, n=20, display=False)
-
-            # Set sampled nodes for the current tID
-            h.set_node_HeteroData(data, tID, global_nodes, node_tools)
-                
-            torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
-            print(f'\rtID: {tID},  {i}/{c.USE_MAX_TFID}', end='')
+                # Set sampled nodes for the current tID
+                h.set_node_HeteroData(data, tID, global_nodes, node_tools)
+                    
+                torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
+            print(f'\r[{i:4d}/{num_tIDs}] Processed tID: {tID}', end='')
         print("\ncreated Graph Objects over all tIDs.")
 
     def len(self):
@@ -169,3 +127,4 @@ class MarketDataset(Dataset):
         data_path = os.path.join(self.processed_dir, f'data_{tID}.pt')
         data = torch.load(data_path, weights_only=False)
         return data
+

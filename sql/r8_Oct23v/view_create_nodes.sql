@@ -7,7 +7,7 @@ drop view if exists futures;
 
 -- step 1.
 
-create view if not exists act.nodes.stocks as(
+create view if not exists act.nodes.stock as(
     select
         t.tID,   -- means date ID that ignore gap days
         t.elpDs, -- means elapsed days from the first date in the dataset
@@ -26,7 +26,7 @@ create view if not exists act.nodes.stocks as(
 
 comment on view act.nodes.stocks is 'this node means the stock data.';
 
-create view if not exists act.nodes.statements as (
+create view if not exists act.nodes.statement as (
     select
         t.tID,   -- means date ID that ignore gap days
         t.elpDs, -- means elapsed days from the first date in the dataset
@@ -64,7 +64,7 @@ create view if not exists act.nodes.mktidx as (
 
 comment on view act.nodes.mktidx is 'this node means the market-index data.';
 
-create view if not exists act.nodes.futures as (
+create view if not exists act.nodes.future as (
     select
         t.tID,   -- means date ID that ignore gap days
         t.elpDs, -- means elapsed days from the first date in the dataset
