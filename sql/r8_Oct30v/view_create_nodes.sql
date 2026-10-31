@@ -89,6 +89,37 @@ create view if not exists act.nodes.statement as (
     order by t.tID, n.gnID
 );
 
+
+
+create view if not exists act.nodes.virtual_statement as (
+    with 
+    any2ID as (
+        select
+            n.gnID,
+            n.ntID,
+            o.* exclude(tradeDate, code)
+        from dev.x.statements as o
+        join dev.id.node as n
+        on o.code = n.code and o.tradeDate = n.tradeDate and n.ntID = 1
+    )
+    select
+        e.tID,
+        t.elpDs, 
+        e.statement_gnID as gnID,  
+        e.statement_lnID as lnID,  
+        e.statement_cID as cID,   
+        o.ntID,  
+        o.* exclude(gnID, ntID)
+    from act.edges.recent_report as e
+    join any2ID as o
+    on e.statement_gnID = o.gnID
+    join dev.id.date as t
+    on e.tID = t.tID
+    order by tID, cID, ntID
+);
+--
+
+
 select count(*) - count(distinct (tID, cID, ntID)) = 0 as dup_type1 from act.nodes.statement;
 select count(*) - count(distinct (tID, lnID)) = 0 as dup_type2 from act.nodes.statement;
 

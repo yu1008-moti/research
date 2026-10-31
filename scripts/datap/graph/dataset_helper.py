@@ -29,8 +29,8 @@ def get_node_data_master(conn: connect) -> Dict[str, pd.DataFrame]:
         nodeTypeName: conn.execute(
             f"""
                 select *
-                from act.nodes.{nodeTypeName}
-                order by gnID;
+                from act.nodes.{nodeTypeName if nodeTypeName != 'statement' else 'virtual_statement'}
+                {'order by gnID' if nodeTypeName != 'statement' else 'order by tID, gnID'};
             """
         ).df()
         for nodeTypeName in c.HETERO_NODE_TYPES
@@ -66,29 +66,41 @@ def set_edges(conn: connect, tID: int, data: HeteroData, pre_process_results: Di
 
 
 def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: Dict[str, pd.DataFrame]):
-    seq_df = conn.execute(
-        f"""
+    for nodeTypeName, nodeTypeID in c.HETERO_NODE_ID.items():
+        seq_df = conn.execute(
+            f"""
             select gnID, seq
             from act.sequence.node
-            where tID = {tID}
-        """
-    ).df().set_index(['gnID'], drop=True)
-    for nodeTypeName in c.HETERO_NODE_TYPES:
-        nodeData = nodeDataMaster[nodeTypeName].set_index('gnID', drop=False)
-        x = nodeData.loc[nodeData['tID'] == tID]
-        gnIDs = x['gnID']
+            where ntID = {nodeTypeID} and tID {f'= {tID}' if nodeTypeName != 'statement' else f'<= {tID}'}
+            order by gnID;
+            """
+        ).df().set_index(['gnID'], drop=True)
+        if nodeTypeID == 1:
+            short_nodeData = conn.execute(
+                f"""
+                select *
+                from act.nodes.statement
+                order by gnID;
+                """
+            ).df()
+        else:
+            short_nodeData = nodeDataMaster[nodeTypeName]
+        nodeData = nodeDataMaster[nodeTypeName]
+        
+        nodeData_gnID = short_nodeData.set_index('gnID', drop=False)
+        x = nodeData[nodeData['tID'] == tID].set_index('gnID', drop=False)
         X = []
-        for seq in seq_df.loc[gnIDs, 'seq'].to_numpy():
+        for seq in seq_df.loc[x['gnID'], 'seq'].to_numpy():
             assert isinstance(seq, np.ndarray), f"Expected seq to be a numpy array, but got {type(seq)}"
-            x_seq_data = nodeData.loc[seq, :].iloc[:, c.NODE_FEATS_HEAD_IDX:].to_numpy()
+            x_seq_data = nodeData_gnID.loc[seq, :].iloc[:, c.NODE_FEATS_HEAD_IDX:].to_numpy()
             X.append(torch.tensor(x_seq_data, dtype=torch.float32))
         
         data[nodeTypeName].x    = pad_sequence(X, batch_first=True, padding_value=0.0)
-        data[nodeTypeName].gnID = torch.tensor(gnIDs.to_numpy(), dtype=torch.int32)
+        data[nodeTypeName].gnID = torch.tensor(x['gnID'].to_numpy(), dtype=torch.int32)
         data[nodeTypeName].lnID = torch.tensor(x['lnID'].to_numpy(), dtype=torch.int16)
         data[nodeTypeName].ntID = torch.tensor(x['ntID'].to_numpy(), dtype=torch.int16)
 
-        del x, gnIDs, X  # Free memory
+        del x, X, nodeData, nodeData_gnID  # Free memory
     del seq_df  # Free memory
 
 

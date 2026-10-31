@@ -4,6 +4,7 @@ drop view if exists act.sequence.node;
 -- stocks sequence
 
 create view act.sequence.node as(
+-- create or replace table test_seq as(
 with
     stack as(
         select *
@@ -21,6 +22,7 @@ with
         select
             o.gnID,
             t.tID,
+            n.ntID,
             o.seq
         from stack as o
         join dev.id.node as n
@@ -30,6 +32,9 @@ with
     )
     select * from withtID order by gnID
 );
+
+-- select count(distinct gnID) from test_seq;
+-- select count(*) - count(distinct (gnID)) as dup from test_seq;
 
 select count(distinct gnID) from act.sequence.node; 
 select count(distinct (tID, cID, ntID)) from act.tools.node_tool;

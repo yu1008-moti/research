@@ -81,6 +81,7 @@ class MarketDataset(Dataset):
         # Create HeteroData objects for each dateID
         print(f"Creating HeteroData objects for tIDs in range [{c.USE_MIN_TFID}, {c.USE_MAX_TFID}]...")
         for i, tID in enumerate(tIDs, 1):
+            if not tID > 1666: continue
             if not (tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID): 
                 data = HeteroData()
                 h.set_edges(self.conn, tID, data, pre_process_results)
