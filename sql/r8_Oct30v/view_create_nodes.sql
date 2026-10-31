@@ -1,0 +1,141 @@
+
+-- memory D select count(*) from dev.x.futures;
+-- ┌──────────────┐
+-- │ count_star() │
+-- │    int64     │
+-- ├──────────────┤
+-- │        23728 │
+-- └──────────────┘
+-- memory D select count(*) from dev.x.stocks;
+-- ┌─────────────────┐
+-- │  count_star()   │
+-- │      int64      │
+-- ├─────────────────┤
+-- │    15538219     │
+-- │ (15.54 million) │
+-- └─────────────────┘
+-- memory D select count(*) from dev.x.statements;
+-- ┌──────────────┐
+-- │ count_star() │
+-- │    int64     │
+-- ├──────────────┤
+-- │       215051 │
+-- └──────────────┘
+-- memory D select count(*) from dev.x.mktidx;
+-- ┌──────────────┐
+-- │ count_star() │
+-- │    int64     │
+-- ├──────────────┤
+-- │       233621 │
+-- └──────────────┘
+-- memory D select count(*) from dev.id.node;
+-- ┌─────────────────┐
+-- │  count_star()   │
+-- │      int64      │
+-- ├─────────────────┤
+-- │    16010619     │
+-- │ (16.01 million) │
+-- └─────────────────┘
+
+-- 16010619 = 15538219 + 215051 + 233621 + 23728
+-- completely match with the sum of dev.x.stocks, dev.x.statements, dev.x.mktidx, dev.x.futures
+
+
+-- step 0.
+drop view if exists stocks;
+drop view if exists statements;
+drop view if exists mktidx;
+drop view if exists futures;
+
+-- step 1.
+
+create view if not exists act.nodes.stock as(
+    select
+        t.tID,   -- means date ID that ignore gap days
+        t.elpDs, -- means elapsed days from the first date in the dataset
+        n.gnID,  -- means global node ID (global: unique ID for each rows in all dates)
+        n.lnID,  -- means local  node ID (local : unique ID for
+        n.cID,   -- means company/underlier-asset/market-index ID (specific: stock and statement can same cID, but different lnID and gnID)
+        n.ntID,  -- means node-type ID (stock: 0, statement: 1, market-index: 2, future:3)
+        o.* exclude(tradeDate, code, s33, s17, mkt)
+    from dev.x.stocks as o
+    join dev.id.node as n
+    on o.code = n.code and o.tradeDate = n.tradeDate and n.ntID = 0
+    join dev.id.date as t
+    on o.tradeDate = t.tradeDate
+    order by t.tID, n.lnID
+);
+
+select count(*) - count(distinct (tID, cID, ntID)) = 0 as dup_type1 from act.nodes.stock;
+select count(*) - count(distinct (tID, lnID)) = 0 as dup_type2 from act.nodes.stock;
+
+comment on view act.nodes.stock is 'this node means the stock data.';
+
+
+create view if not exists act.nodes.statement as (
+    select
+        t.tID,   -- means date ID that ignore gap days
+        t.elpDs, -- means elapsed days from the first date in the dataset
+        n.gnID,  -- means global node ID (global: unique ID for each rows in all dates)
+        n.lnID,  -- means local  node ID (local : unique ID for each rows in each date)
+        n.cID,   -- means company/underlier-asset/market-index ID (specific: stock and statement can same cID, but different lnID and gnID)
+        n.ntID,  -- means node-type ID (stock: 0, statement: 1, market-index: 2, future:3)
+        o.* exclude(tradeDate, code) 
+    from dev.x.statements as o
+    join dev.id.node as n 
+    on o.code = n.code and o.tradeDate = n.tradeDate and n.ntID = 1
+    join dev.id.date as t
+    on o.tradeDate = t.tradeDate
+    order by t.tID, n.gnID
+);
+
+select count(*) - count(distinct (tID, cID, ntID)) = 0 as dup_type1 from act.nodes.statement;
+select count(*) - count(distinct (tID, lnID)) = 0 as dup_type2 from act.nodes.statement;
+
+comment on view act.nodes.statement is 'this node means the statement data.';
+
+create view if not exists act.nodes.mktidx as (
+    select
+        t.tID,   -- means date ID that ignore gap days
+        t.elpDs, -- means elapsed days from the first date in the dataset
+        n.gnID,  -- means global node ID (global: unique ID for each rows in all dates)
+        n.lnID,  -- means local  node ID (local : unique ID for each rows in each date)
+        n.cID,   -- means company/underlier-asset/market-index ID (specific: stock and statement can same cID, but different lnID and gnID)
+        n.ntID,  -- means node-type ID (stock: 0, statement: 1, market-index: 2, future:3)
+        o.* exclude(tradeDate, code) 
+    from dev.x.mktidx as o
+    join dev.id.node as n 
+    on o.code = n.code and o.tradeDate = n.tradeDate and n.ntID = 2
+    join dev.id.date as t
+    on o.tradeDate = t.tradeDate
+    order by t.tID, n.gnID
+);
+
+select count(*) - count(distinct (tID, cID, ntID)) = 0 as dup_type1 from act.nodes.mktidx;
+select count(*) - count(distinct (tID, lnID)) = 0 as dup_type2 from act.nodes.mktidx;
+
+comment on view act.nodes.mktidx is 'this node means the market-index data.';
+
+create view if not exists act.nodes.future as (
+    select
+        t.tID,   -- means date ID that ignore gap days
+        t.elpDs, -- means elapsed days from the first date in the dataset
+        n.gnID,  -- means global node ID (global: unique ID for each rows in all dates)
+        n.lnID,  -- means local  node ID (local : unique ID for each rows in each date)
+        n.cID,   -- means company/underlier-asset/market-index ID (specific: stock and statement can same cID, but different lnID and gnID)
+        n.ntID,  -- means node-type ID (stock: 0, statement: 1, market-index: 2, future:3)
+        o.* exclude(tradeDate, code) 
+    from dev.x.futures as o
+    join dev.id.node as n 
+    on o.code = n.code and o.tradeDate = n.tradeDate and n.ntID = 3
+    join dev.id.date as t
+    on o.tradeDate = t.tradeDate
+    order by t.tID, n.gnID
+);
+
+select count(*) - count(distinct (tID, cID, ntID)) = 0 as dup_type1 from act.nodes.future;
+select count(*) - count(distinct (tID, lnID)) = 0 as dup_type2 from act.nodes.future;
+
+comment on view act.nodes.future is 'this node means the future data.';
+
+select database_name, schema_name, view_name, comment from duckdb_views() where not internal;

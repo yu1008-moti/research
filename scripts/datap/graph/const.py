@@ -4,6 +4,8 @@ from pathlib import Path
 import numpy as np
 from typing import Dict, List, Tuple
 
+DB_VERSION = "r8_Oct30v"
+
 NUM_LABELS = 3  # Assuming 3 classes for classification
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -124,7 +126,7 @@ NUM_OCCUR_WINDOW_SIZE = 12
 
 # capm correlation calculation config
 DEFAULT_WINDOW_SIZE = GRU_WINDOW_SIZE  # Default window size for rolling regression
-CORR_THRESHOLD = 0.7 # Default threshold for correlation filtering
+CORR_THRESHOLD = 0.9 # Default threshold for correlation filtering
 EDGE_TYPE = 'corr'
 JENSEN_ALPHA = 'const'
 BETA = 'Rm'
@@ -162,5 +164,5 @@ TORCH_FLOAT32 = torch.float32
 TORCH_INT32 = torch.int32
 TORCH_LONG = torch.long
 
-ACT_DB_PATH = Path("./db/synthesis/r8_Oct23v/r8_Oct23v.act.duckdb")
-DEV_DB_PATH = Path("./db/synthesis/r8_Oct23v/r8_Oct23v.dev.duckdb")
+ACT_DB_PATH = Path(f"./db/synthesis/{DB_VERSION}/{DB_VERSION}.act.duckdb")
+DEV_DB_PATH = Path(f"./db/synthesis/{DB_VERSION}/{DB_VERSION}.dev.duckdb")

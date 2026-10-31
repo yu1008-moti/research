@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 from torch_geometric.data import HeteroData
 from torch_geometric.data import InMemoryDataset, Dataset
 import pandas as pd
@@ -23,8 +24,8 @@ class MarketDataset(Dataset):
             root,
         ):
         self.undo = False
-        
         print(f'device: {c.DEVICE}')
+        print(f'db_ver: {c.DB_VERSION}')
         if os.path.exists(os.path.join(root, "processed")):
             print(f"Processed data found in {os.path.join(root, 'processed')}. Skipping processing.")
             self.undo = True
@@ -57,74 +58,43 @@ class MarketDataset(Dataset):
         else:
             corr_info = np.load(c.CORR_EDGE_INFO_PATH)
             edge_index = corr_info['edge_index']
-            tIDs = corr_info['tIDs'] # later, we use "tID" for dict key.
-            attr = corr_info['attr']
-            etID = corr_info['etID']
+            tIDs, attr, etID = corr_info['tIDs'], corr_info['attr'], corr_info['etID']
             del corr_info  # Free memory
         assert edge_index.shape[1] == len(tIDs) == len(attr) == len(etID) > 0, "The loaded edge data from 'corr_edge_info.npz' is inconsistent or empty."
         return {'edge_index': edge_index, 'tID': tIDs, 'attr': attr, 'etID': etID}
 
     def process(self):
-        
         if self.undo: return
 
-        # Read data into huge `Data` list.
-        # data_list = []
-        global_edges: Dict[int, Any] = {}
-        global_nodes: Dict[int, Any] = {}
-
         # These tools are used to thier relevant job
-        print("Loading tools from the database...")
-        date_tools = self.conn.execute(f"SELECT * from tools.date_tool where tID < {c.MAX_TID};").df()
-        node_tools = self.conn.execute(f"SELECT * from tools.node_tool where tID < {c.MAX_TID};").df()
-        assert not date_tools.empty, "Date tools is empty. Please check the database."
-        assert not node_tools.empty, "Node tools is empty. Please check the database."
-        print("Tools loaded successfully.\n")
+        tIDs = h.get_tIDs(self.conn)
 
-        # Set up the entire_data dictionary
-        global_edges = h.get_global_edges(self.conn, self.pre_process())
-        global_nodes = h.get_global_nodes(self.conn)
+        # Load all node data for all node types into memory to avoid repeated database queries
+        node_data_master = h.get_node_data_master(self.conn)
+
+        # pre-process the correlation edge data and save it to a file for later use
+        pre_process_results = self.pre_process()
 
         # Set up labels for eval nodes
-        returns = self.conn.execute("SELECT * from labels.mv3;").df()
-        h.set_labels(returns)  # Set labels for the returns DataFrame
-
-        num_tIDs = len(date_tools.loc[:, 'tID'])
+        h.set_labels(self.conn)
 
         # Create HeteroData objects for each dateID
         print(f"Creating HeteroData objects for tIDs in range [{c.USE_MIN_TFID}, {c.USE_MAX_TFID}]...")
-        for i, tID in enumerate(date_tools.loc[:, 'tID'], 1):
+        for i, tID in enumerate(tIDs, 1):
             if not (tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID): 
-                # Initialize a new HeteroData.
                 data = HeteroData()
-
-                # Set edges for the current tID
-                h.set_edge_HeteroData(data, tID, global_edges)
-
-                # Pick up nodes by HGTsampling
-                # Also, HGTsampling filter edges corresponding to the sampled nodes
-                # init_OS = returns.loc[returns['tID'] == tID, 'cID'].to_list()
-                # HGTsampling(data, init_OS, L=2, n=20, display=False)
-
-                # Set sampled nodes for the current tID
-                h.set_node_HeteroData(data, tID, global_nodes, node_tools)
-                    
+                h.set_edges(self.conn, tID, data, pre_process_results)
+                h.set_nodes(self.conn, tID, data, node_data_master)
                 torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
-            print(f'\r[{i:4d}/{num_tIDs}] Processed tID: {tID}', end='')
+            print(f'\r[{i:4d}/{len(tIDs)}] Processed tID: {tID}', end='')
         print("\ncreated Graph Objects over all tIDs.")
 
     def len(self):
         return len(self.processed_file_names)
 
     def get(self, tID:int) -> HeteroData:
-        """
-        Get a HeteroData object by its tID.
-        """
-        # print(f"Fetching data for tID: {tID}")
         if tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID:
             raise IndexError("Index out of range")
-    
         data_path = os.path.join(self.processed_dir, f'data_{tID}.pt')
         data = torch.load(data_path, weights_only=False)
         return data
-
