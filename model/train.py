@@ -23,7 +23,6 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
         epock_valid_losses = []
 
         for idx in range(c.TRAIN_RANGE_BY_TFID[0], c.TRAIN_RANGE_BY_TFID[1] + 1):
-            if not idx > 1666: continue
 
             data = dataset.get(idx)
             
