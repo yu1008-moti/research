@@ -1,10 +1,10 @@
 import torch
 from pathlib import Path
-
 import numpy as np
 from typing import Dict, List, Tuple
+from string import Template
 
-DB_VERSION = "r8_Oct30v"
+DB_VERSION = "r8_Nov4v"
 
 NUM_LABELS = 3  # Assuming 3 classes for classification
 
@@ -12,14 +12,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 MAX_TID = 4392 # include this dateID
 
-# select * from '..\parquet\dateID.parquet' where TradeDate in [cast('2015-01-05' as DATE), cast('2025-12-30' as DATE)];
-# ┌───────┬────────────┬────────┬───────┬───────┐
-# │ tfID  │ TradeDate  │ dateID │ train │ eval  │
-# │ int64 │    date    │ int64  │ int32 │ int32 │
-# ├───────┼────────────┼────────┼───────┼───────┤
-# │  1634 │ 2015-01-05 │   2435 │     1 │     0 │
-# │  4321 │ 2025-12-30 │   6447 │     0 │     1 │
-# └───────┴────────────┴────────┴───────┴───────┘
 USE_MIN_TFID = 1634 # means 2015-01-05
 USE_MAX_TFID = 4321 # means 2025-12-30
 
@@ -29,12 +21,10 @@ CAPM_DATA_FILE_PATH = Path("scripts/datap/graph/processed/capm_data.parquet")
 CORR_EDGE_INFO_PATH = Path("scripts/datap/graph/processed/corr_edge_info.npz")
 
 
-# address: 0 is center (*_i), 1 is neighbor (*_j)
 HETERO_EDGE_UNIT: Dict[str, Tuple[str, str]] = {
     "corr"           : ('stock' , 'stock'),
     "made_up_mkt"    : ('stock' , 'mktidx'),
     "made_up_topix"  : ('stock' , 'mktidx'),
-    "made_up_s33"    : ('stock' , 'mktidx'),
     "made_up_s17"    : ('stock' , 'mktidx'),
     "recent_report"  : ('stock' , 'statement'),
     "mktidx_future"  : ('mktidx', 'future')
@@ -47,24 +37,24 @@ HETERO_NODE_TYPES: List[str] = [
     'future'
 ]
 
+
 HETERO_EDGE_TYPES: List[str] = [
     'corr',
     'made_up_mkt',
     'made_up_topix',
-    'made_up_s33',
     'made_up_s17',
     'recent_report',
     'mktidx_future'
 ]
 
+
 HETERO_EDGE_ID: Dict[str, int] = {
     'corr'           : 0,
     'made_up_mkt'    : 1,
     'made_up_topix'  : 2,
-    'made_up_s33'    : 3,
-    'made_up_s17'    : 4,
-    'recent_report'  : 5,
-    'mktidx_future'  : 6
+    'made_up_s17'    : 3,
+    'recent_report'  : 4,
+    'mktidx_future'  : 5
 }
 
 HETERO_NODE_ID: Dict[str, int] = {
@@ -166,3 +156,37 @@ TORCH_LONG = torch.long
 
 ACT_DB_PATH = Path(f"./db/synthesis/{DB_VERSION}/{DB_VERSION}.act.duckdb")
 DEV_DB_PATH = Path(f"./db/synthesis/{DB_VERSION}/{DB_VERSION}.dev.duckdb")
+
+GET_TID_QUERY = \
+f"""\
+select tID \
+from act.tools.date_tool \
+where tID between {USE_MIN_TFID} and {USE_MAX_TFID} \
+order by tID;\
+"""
+
+GET_NODE_DATA_MASTER_QUERY = Template(
+"""
+select *
+from act.nodes.${ntNm}
+order by tID, gnID;
+"""
+)
+
+SET_EDGES_QUERY = Template(
+"""
+select ${src_ntNm}_lnID, ${tgt_ntNm}_lnID
+from act.edges.${etNm}
+where tID = ${tID}
+order by ${src_ntNm}_gnID, ${tgt_ntNm}_gnID;
+"""
+)
+
+SET_NODES_QUERY = Template( 
+"""
+select gnID, seq
+from act.seq.node
+where ntID = ${ntID} and tID ${cond} ${tID}
+order by gnID;
+"""
+)

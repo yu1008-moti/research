@@ -23,16 +23,18 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
         epock_valid_losses = []
 
         for idx in range(c.TRAIN_RANGE_BY_TFID[0], c.TRAIN_RANGE_BY_TFID[1] + 1):
+            if not idx > 1666: continue
 
             data = dataset.get(idx)
             
             optimizer.zero_grad()
 
             # check order of lnIDs
-            lnIDs        = torch.cat([data[nt].lnIDs for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            assert sum(lnIDs[t] - (lnIDs[t-1] + 1) for t in range(1, len(lnIDs))) == 0, "lnIDs should be consecutive integers"
+            lnIDs   = torch.cat([data[nt].lnID for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            assert sum(lnIDs[1:] - lnIDs[:-1] != 1) == 0, "lnIDs should be consecutive integers"
 
             x       = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
+            lnIDs   = [data[nt].lnID for nt in c.HETERO_NODE_TYPES] # it use for check order of lnIDs and index
             ntIDs   = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
             target  = torch.cat([data[nt].target  for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
             seq_len = torch.cat([data[nt].seq_len for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
@@ -42,7 +44,7 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
             
             labels = data["stock"].labels
 
-            output = model(x, seq_len, edge_index, ntIDs, etIDs, target)
+            output = model(x, lnIDs, seq_len, edge_index, ntIDs, etIDs, target)
 
             loss = LOSS_FN(output, labels)
             epock_train_losses.append(loss.item())
@@ -58,8 +60,8 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
             optimizer.zero_grad()
 
             # check order of lnIDs
-            lnIDs        = torch.cat([data[nt].lnIDs for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            assert sum(lnIDs[t] - (lnIDs[t-1] + 1) for t in range(1, len(lnIDs))) == 0, "lnIDs should be consecutive integers"
+            lnIDs   = torch.cat([data[nt].lnID for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+            assert sum(lnIDs[1:] - lnIDs[:-1] != 1) == 0, "lnIDs should be consecutive integers"
 
             x       = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
             ntIDs   = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
@@ -71,7 +73,7 @@ def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:in
             
             labels = data["stock"].labels
 
-            output = model(x, seq_len, edge_index, ntIDs, etIDs, target)
+            output = model(x, lnIDs, seq_len, edge_index, ntIDs, etIDs, target)
 
             loss = LOSS_FN(output, labels)
             epock_train_losses.append(loss.item())

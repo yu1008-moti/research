@@ -40,7 +40,9 @@ class myGRU(nn.Module):
             for in_dim in self.node_type_input_num.values()
         ])
 
-    def forward(self, x:List[torch.Tensor], seq_len, ntIDs) -> torch.Tensor:
+    def forward(self, x:List[torch.Tensor], lnIDs:List[torch.Tensor], seq_len, ntIDs) -> torch.Tensor:
+
+        
 
         emb = torch.zeros(len(x), self.hidden_size, device=DEVICE)
 
@@ -72,10 +74,10 @@ class MarketHGTModel(nn.Module):
         self.hgt_conv = conv.GNNModel(in_hid, out_hid, num_head, num_layers, dropout)
         self.classifier = Classifier(out_hid)
 
-    def forward(self, x:List[torch.Tensor], seq_len, edge_index, ntIDs: torch.Tensor, etIDs: torch.Tensor, target):
+    def forward(self, x:List[torch.Tensor], lnIDs:List[torch.Tensor], seq_len, edge_index, ntIDs: torch.Tensor, etIDs: torch.Tensor, target):
         # Pass through GRU
         # forward(self, x, seq_len, x_node_types):
-        h = self.gru(x, seq_len, ntIDs)  # Assuming node_type_i represents the node types for GRU
+        h = self.gru(x, lnIDs, seq_len, ntIDs)  # Assuming node_type_i represents the node types for GRU
         # Pass through HGTConv
         x = self.hgt_conv(h, edge_index, ntIDs, etIDs)
         

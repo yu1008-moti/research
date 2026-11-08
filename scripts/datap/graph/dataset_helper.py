@@ -8,97 +8,58 @@ from torch.nn.utils.rnn import pad_sequence
 
 import scripts.datap.graph.const as c
 
+GREEN = '\033[92m'
+MAGENTA = '\033[95m'
+END = '\033[0m'
+
 
 def get_tIDs(conn: connect) -> np.ndarray:
-    print("Fetching tIDs from the database...")
-    tIDs = conn.execute(
-        f"""
-            select tID
-            from act.tools.date_tool
-            where tID between {c.USE_MIN_TFID} and {c.USE_MAX_TFID}
-            order by tID;
-        """
-    ).df()['tID'].to_numpy()
-    print(f"Fetched {len(tIDs)} tIDs from the database.")
+    print("\rFetching tIDs", end="")
+    tIDs = conn.execute(c.GET_TID_QUERY).df()['tID'].to_numpy()
+    print(f"{GREEN}Fetched {len(tIDs)} tIDs from the database.{END}")
     return tIDs
 
 
 def get_node_data_master(conn: connect) -> Dict[str, pd.DataFrame]:
-    print("creating node_data_master for all node types...")
-    node_data_master = {
-        nodeTypeName: conn.execute(
-            f"""
-                select *
-                from act.nodes.{nodeTypeName if nodeTypeName != 'statement' else 'virtual_statement'}
-                {'order by gnID' if nodeTypeName != 'statement' else 'order by tID, gnID'};
-            """
-        ).df()
-        for nodeTypeName in c.HETERO_NODE_TYPES
-    }
-    print("Node data for all node types was loaded successfully.\n")
+    print("\rcreating node_data_master", end=" ")
+    node_data_master = {ntNm: conn.execute(c.GET_NODE_DATA_MASTER_QUERY.substitute(ntNm=ntNm)).df() for ntNm in c.HETERO_NODE_TYPES}
+    print(f"{GREEN}Node data for all node types was loaded successfully.{END}")
     return node_data_master
 
 
 def set_edges(conn: connect, tID: int, data: HeteroData, pre_process_results: Dict[str, Any]) -> None:
-    for edgeTypeName, (src_nodeTypeName, tgt_nodeTypeName) in c.HETERO_EDGE_UNIT.items():
-        if edgeTypeName == "corr":
+    for etNm, (src_ntNm, tgt_ntNm) in c.HETERO_EDGE_UNIT.items():
+        if etNm == "corr":
             # Use the pre-processed correlation edge data
             mask = pre_process_results['tID'] == tID
             edge_index = torch.tensor(pre_process_results['edge_index'][:, mask], dtype=torch.long)
             etIDs      = torch.tensor(pre_process_results['etID'][mask], dtype=torch.int16)
         else:
-            edges_df = conn.execute(
-                f"""
-                    select {src_nodeTypeName}_lnID, {tgt_nodeTypeName}_lnID
-                    from act.edges.{edgeTypeName}
-                    where tID = {tID}
-                    order by {src_nodeTypeName}_gnID, {tgt_nodeTypeName}_gnID;
-                """
-            ).df()
-            edge_index = torch.tensor(
-                edges_df[[f"{src_nodeTypeName}_lnID", f"{tgt_nodeTypeName}_lnID"]].values.T, 
-                dtype=torch.long
-            )
-            etIDs = torch.tensor(np.full((edges_df.shape[0],), c.HETERO_EDGE_ID[edgeTypeName], dtype=c.NP_INT32))
-        data[src_nodeTypeName, edgeTypeName, tgt_nodeTypeName].edge_index = edge_index
-        data[src_nodeTypeName, edgeTypeName, tgt_nodeTypeName].etID = etIDs
-
+            edges_df = conn.execute(c.SET_EDGES_QUERY.substitute(src_ntNm=src_ntNm, tgt_ntNm=tgt_ntNm, etNm=etNm, tID=tID)).df()
+            edge_index = torch.tensor(edges_df[[f"{src_ntNm}_lnID", f"{tgt_ntNm}_lnID"]].values.T, dtype=torch.long)
+            etIDs = torch.tensor(np.full((edges_df.shape[0],), c.HETERO_EDGE_ID[etNm], dtype=c.NP_INT32))
+        data[src_ntNm, etNm, tgt_ntNm].edge_index = edge_index
+        data[src_ntNm, etNm, tgt_ntNm].etID = etIDs
 
 
 def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: Dict[str, pd.DataFrame]):
-    for nodeTypeName, nodeTypeID in c.HETERO_NODE_ID.items():
-        seq_df = conn.execute(
-            f"""
-            select gnID, seq
-            from act.sequence.node
-            where ntID = {nodeTypeID} and tID {f'= {tID}' if nodeTypeName != 'statement' else f'<= {tID}'}
-            order by gnID;
-            """
-        ).df().set_index(['gnID'], drop=True)
-        if nodeTypeID == 1:
-            short_nodeData = conn.execute(
-                f"""
-                select *
-                from act.nodes.statement
-                order by gnID;
-                """
-            ).df()
-        else:
-            short_nodeData = nodeDataMaster[nodeTypeName]
-        nodeData = nodeDataMaster[nodeTypeName]
-        
-        nodeData_gnID = short_nodeData.set_index('gnID', drop=False)
-        x = nodeData[nodeData['tID'] == tID].set_index('gnID', drop=False)
+    for ntNm, ntID in c.HETERO_NODE_ID.items():
+        nodeData = nodeDataMaster[ntNm]
+        cond = "=" if ntNm != "statement" else "<="
+        seq_df = conn.execute(c.SET_NODES_QUERY.substitute(ntID=ntID, tID=tID, cond=cond)).df().set_index(['gnID'], drop=True)
+        nodeData_gnID = nodeData.set_index('gnID', drop=False)
+        nodeData_gnID = nodeData_gnID[~nodeData_gnID.index.duplicated(keep='first')] # for statement nodes
+        x = nodeData[nodeData['tID'] == tID].set_index('gnID', drop=False).sort_values(by='lnID')
         X = []
         for seq in seq_df.loc[x['gnID'], 'seq'].to_numpy():
             assert isinstance(seq, np.ndarray), f"Expected seq to be a numpy array, but got {type(seq)}"
             x_seq_data = nodeData_gnID.loc[seq, :].iloc[:, c.NODE_FEATS_HEAD_IDX:].to_numpy()
             X.append(torch.tensor(x_seq_data, dtype=torch.float32))
         
-        data[nodeTypeName].x    = pad_sequence(X, batch_first=True, padding_value=0.0)
-        data[nodeTypeName].gnID = torch.tensor(x['gnID'].to_numpy(), dtype=torch.int32)
-        data[nodeTypeName].lnID = torch.tensor(x['lnID'].to_numpy(), dtype=torch.int16)
-        data[nodeTypeName].ntID = torch.tensor(x['ntID'].to_numpy(), dtype=torch.int16)
+        data[ntNm].x    = pad_sequence(X, batch_first=True, padding_value=0.0)
+        data[ntNm].gnID = torch.tensor(x['gnID'].to_numpy(), dtype=torch.int32)
+        data[ntNm].lnID = torch.tensor(x['lnID'].to_numpy(), dtype=torch.int16)
+        data[ntNm].ntID = torch.tensor(x['ntID'].to_numpy(), dtype=torch.int16)
 
         del x, X, nodeData, nodeData_gnID  # Free memory
     del seq_df  # Free memory
@@ -123,7 +84,7 @@ def set_labels(conn: connect) -> None:
     returns['pos'] = (returns['NxRi'] > high_threshold).astype(int)
     returns['neu'] = ((returns['NxRi'] >= low_threshold) & (returns['NxRi'] <= high_threshold)).astype(int)
 
-    print("\nREPORT: Labeling of returns based on thresholds")
+    print(f"\n{MAGENTA}REPORT: Labeling of returns based on thresholds{END}")
     print(f"Number of samples used to define thresholds: {num_define_labels_samples}")
     print(f"Label thresholds   : low={low_threshold}, high={high_threshold}")
     print(f"Label distribution : neg={returns['neg'].sum()}, pos={returns['pos'].sum()}, neu={returns['neu'].sum()}")
