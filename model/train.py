@@ -3,97 +3,123 @@ import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 from typing import Dict, List, Tuple
+import matplotlib.pyplot as plt 
+from datetime import datetime as dt
+from torch_geometric.data import HeteroData
+import random
 
 from model.model import MarketHGTModel
 # import scripts.datap.graph.loader as loader
 import scripts.datap.graph.const as c
 from scripts.datap.graph.dataset import MarketDataset
 
-LOSS_FN = CrossEntropyLoss()  # Using CrossEntropyLoss for multi-class classification # Using Adam optimizer for training
-NODENAME2NODEID = {'stock':0, 'statement':1, 'mktIdx':2, 'future':3}
 
-def train(model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, epoch:int):
+def train(
+        model:MarketHGTModel, dataset: MarketDataset, optimizer:Adam, 
+        criterion:CrossEntropyLoss, epoch:int, early_stop:float, train_size:int
+        ):
 
     train_losses = []
     valid_losses = []
+
+    best_valid_loss = float('inf')
+
+    start_time = dt.now()
 
     for e in range(epoch):
 
         epock_train_losses = []
         epock_valid_losses = []
 
-        for idx in range(c.TRAIN_RANGE_BY_TFID[0], c.TRAIN_RANGE_BY_TFID[1] + 1):
+        epoch_time = dt.now()
+        train_extracted_data = [
+            dataset.get(idx) for idx in [
+                random.randint(c.TRAIN_RANGE_TID[0], c.TRAIN_RANGE_TID[1] + 1) 
+                for _ in range(train_size)
+            ]
+        ]
 
-            data = dataset.get(idx)
-            
-            optimizer.zero_grad()
+        valid_data = [dataset.get(idx) for idx in range(c.VALID_RANGE_TID[0], c.VALID_RANGE_TID[1] + 1)]
 
-            # check order of lnIDs
-            lnIDs   = torch.cat([data[nt].lnID for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            assert sum(lnIDs[1:] - lnIDs[:-1] != 1) == 0, "lnIDs should be consecutive integers"
+        optimizer.zero_grad()
 
-            x       = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
-            lnIDs   = [data[nt].lnID for nt in c.HETERO_NODE_TYPES] # it use for check order of lnIDs and index
-            ntIDs   = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            target  = torch.cat([data[nt].target  for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            seq_len = torch.cat([data[nt].seq_len for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            
-            edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
-            etIDs  = torch.cat([data[edge_type].etIDs      for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
-            
-            labels = data["stock"].labels
+        # for idx in range(c.TRAIN_RANGE_TID[0], c.TRAIN_RANGE_TID[1] + 1):
+        for data in train_extracted_data: # for debugging, only use 2856 to 2858 for training0
 
-            output = model(x, lnIDs, seq_len, edge_index, ntIDs, etIDs, target)
+            labels = torch.argmax(data["stock"].labels.long(), dim=1).to(c.DEVICE)
+            output = model(data)
 
-            loss = LOSS_FN(output, labels)
-            epock_train_losses.append(loss.item())
+            loss = criterion(output, labels)
+            epock_train_losses.append(float(loss.to('cpu').detach().numpy()))
             loss.backward()
-            optimizer.step()
-    
+        
+        optimizer.step()
+
+        for data in valid_data:
+            labels = torch.argmax(data["stock"].labels.long(), dim=1).to(c.DEVICE)
+            output = model(data)
+
+            loss = criterion(output, labels)
+            epock_valid_losses.append(float(loss.to('cpu').detach().numpy()))
+
+        print(f'Epoch {e+1}/{epoch}')
+        print(f'Train Loss: {sum(epock_train_losses)/train_size:.4f}')
+        print(f'Valid Loss: {sum(epock_valid_losses)/len(valid_data):.4f}')
+        print(f'Time for epoch: {dt.now() - epoch_time}')
         train_losses.append(sum(epock_train_losses))
+        valid_losses.append(sum(epock_valid_losses))
 
-        for idx in range(c.VALID_RANGE_BY_TFID[0], c.VALID_RANGE_BY_TFID[1] + 1):
+        # Early stopping and model saving based on validation loss
+        if sum(epock_valid_losses) < best_valid_loss:
+            best_valid_loss = sum(epock_valid_losses)
+            if best_valid_loss < early_stop:  # Save the model only if the validation loss is below a certain threshold
+                torch.save(model.state_dict(), f"best_market_hgt_model_{dt.now().strftime('%Y%m%d_%H%M%S')}.pt")
+                print(f"Model saved at epoch {e+1} with validation loss {best_valid_loss:.4f}")
+                break  # Stop training if the model is saved
 
-            data = dataset.get(idx)
-            
-            optimizer.zero_grad()
 
-            # check order of lnIDs
-            lnIDs   = torch.cat([data[nt].lnID for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            assert sum(lnIDs[1:] - lnIDs[:-1] != 1) == 0, "lnIDs should be consecutive integers"
+    plt.plot(range(1, epoch+1), train_losses, label='Train Loss')    
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss')
+    plt.legend()
+    plt.show()
+    print(f"Training completed in: {dt.now() - start_time}")
+    torch.save(model.state_dict(), f"market_hgt_model_{dt.now().strftime('%Y%m%d_%H%M%S')}.pt")
+    return
 
-            x       = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
-            ntIDs   = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            target  = torch.cat([data[nt].target  for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            seq_len = torch.cat([data[nt].seq_len for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-            
-            edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
-            etIDs  = torch.cat([data[edge_type].etIDs      for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
-            
-            labels = data["stock"].labels
+def evaluate(model:MarketHGTModel, dataset: MarketDataset, criterion:CrossEntropyLoss):
+    total_loss = 0.0
+    total_correct = 0
+    total_samples = 0
 
-            output = model(x, lnIDs, seq_len, edge_index, ntIDs, etIDs, target)
+    with torch.no_grad():
+        for tID in range(c.EVAL_RANGE_TID[0], c.EVAL_RANGE_TID[1] + 1):
+            data = dataset.get(tID)
+            labels = torch.argmax(data["stock"].labels.long(), dim=1).to(c.DEVICE)
+            output = model(data)
 
-            loss = LOSS_FN(output, labels)
-            epock_train_losses.append(loss.item())
+            loss = criterion(output, labels)
+            total_loss += float(loss.to('cpu').detach().numpy())
+            total_correct += (output.argmax(dim=1) == labels).sum().item()
+            total_samples += labels.size(0)
 
-        valid_losses.append(sum(epock_valid_losses)/c.VALID_LENGTH)
+    avg_loss = total_loss / (c.EVAL_LENGTH)
+    accuracy = total_correct / total_samples if total_samples > 0 else 0.0
 
-        print(
-            f'Epoch {e+1}/{epoch}\n\
-              Train Loss: {sum(epock_train_losses)/c.TRAIN_LENGTH:.4f}\n\
-              Valid Loss: {sum(epock_valid_losses)/c.VALID_LENGTH:.4f}'
-            )
+    print(f'Evaluation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the MarketHGTModel.")
-    parser.add_argument("--in-hid"    , type=int  , default=128, help="Input hidden dimension.")
-    parser.add_argument("--out-hid"   , type=int  , default=128, help="Output hidden dimension.")
-    parser.add_argument("--num-head"  , type=int  , default=4  , help="Number of attention heads.")
-    parser.add_argument("--dropout"   , type=float, default=0.1, help="Dropout rate.")
-    parser.add_argument("--epochs"    , type=int  , default=32 , help="Number of epochs to train.")
-    parser.add_argument("--num-layer" , type=int  , default=2  , help="Number of GNN layers.")
-    parser.add_argument("--lr"        , type=float, default=0.001, help="Learning rate.")
+    parser.add_argument("--in-hid"    , type=int  , default=128   , help="Input hidden dimension.")
+    parser.add_argument("--out-hid"   , type=int  , default=128   , help="Output hidden dimension.")
+    parser.add_argument("--num-head"  , type=int  , default=4     , help="Number of attention heads.")
+    parser.add_argument("--dropout"   , type=float, default=0.1   , help="Dropout rate.")
+    parser.add_argument("--epochs"    , type=int  , default=10e+5 , help="Number of epochs to train.")
+    parser.add_argument("--train-size", type=int  , default=32    , help="Batch size for training.")
+    parser.add_argument("--early-stop", type=int  , default=10e-5 , help="Number of epochs to stop training early.")
+    parser.add_argument("--num-layer" , type=int  , default=2     , help="Number of GNN layers.")
+    parser.add_argument("--lr"        , type=float, default=0.001 , help="Learning rate.")
     parser.add_argument('--bidirectional', action='store_true', help="Use bidirectional GRU.")
     args = parser.parse_args()
 
@@ -109,7 +135,11 @@ if __name__ == "__main__":
     # Load the dataset by get-method with tfID
     dataset = MarketDataset(root="pt")
 
-    optimizer = Adam(model.parameters(), lr=0.001)
+    optimizer = Adam(model.parameters(), lr=args.lr)
+    criterion = CrossEntropyLoss()
 
     model.train()
-    train(model, dataset, optimizer=optimizer, epoch=args.epochs)
+    train(model, dataset, optimizer=optimizer, criterion=criterion, epoch=args.epochs, early_stop=args.early_stop, train_size=args.train_size)
+
+    model.eval()
+    evaluate(model, dataset, criterion=criterion)

@@ -23,7 +23,8 @@ with
             o.gnID,
             t.tID,
             n.ntID,
-            o.seq
+            o.seq,
+            length(o.seq) as seq_len
         from stack as o
         join dev.id.node as n
         on o.gnID = n.gnID

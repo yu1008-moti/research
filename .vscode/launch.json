@@ -41,7 +41,7 @@
                 "--out-hid"   , "128", 
                 "--num-head"  , "4", 
                 "--dropout"   , "0.1", 
-                "--epochs"    , "1",
+                "--epochs"    , "100",
                 "--num-layer" , "2", 
                 "--lr"        , "0.001", ]
         },

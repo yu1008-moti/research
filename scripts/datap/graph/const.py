@@ -10,10 +10,10 @@ NUM_LABELS = 3  # Assuming 3 classes for classification
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MAX_TID = 4392 # include this dateID
+# MAX_TID = 4392 # include this dateID
 
-USE_MIN_TFID = 1634 # means 2015-01-05
-USE_MAX_TFID = 4321 # means 2025-12-30
+# USE_MIN_TFID = 1634 # means 2015-01-05
+# USE_MAX_TFID = 4321 # means 2025-12-30
 
 PARQUET_DISR = Path("db/parquet")
 
@@ -47,6 +47,21 @@ HETERO_EDGE_TYPES: List[str] = [
     'mktidx_future'
 ]
 
+HETERO_EDGE_UNIT_ID: List[Tuple[int, int, int]] = [
+    (0, 0, 0),  # corr: stock -> stock
+    (0, 1, 1),  # recent_report: stock -> statement
+    (0, 1, 2),  # made_up_mkt: stock -> mktidx
+    (0, 1, 3),  # made_up_topix: stock -> mktidx
+    (0, 1, 4),  # made_up_s17: stock -> mktidx
+    (2, 3, 5)   # mktidx_future: mktidx -> future
+]
+
+HETERO_NODE_ID: Dict[str, int] = {
+    'stock'    : 0,
+    'statement': 1,
+    'mktidx'   : 2,
+    'future'   : 3
+}
 
 HETERO_EDGE_ID: Dict[str, int] = {
     'corr'           : 0,
@@ -57,12 +72,6 @@ HETERO_EDGE_ID: Dict[str, int] = {
     'mktidx_future'  : 5
 }
 
-HETERO_NODE_ID: Dict[str, int] = {
-    'stock'    : 0,
-    'statement': 1,
-    'mktidx'   : 2,
-    'future'   : 3
-}
 
 # select count(*)-4 as num_cols from (describe '.\*\*.parquet');
 # "4" means "tfID", "codeID", "dateID", "nodeID" columns
@@ -124,9 +133,9 @@ BETA = 'Rm'
 START_idX = 0
 END_idX = 1
 # reference: duckdb side processing
-TRAIN_RANGE_BY_DATEID = (1334, 5351) # (2015-01-05, 2022-12-30)
-VALID_RANGE_BY_DATEID = (5356, 5715) # (2023-01-04, 2023-12-29)
-EVAL_RANGE_BY_DATEID  = (5721, 6447) # (2024-01-04, 2025-12-30)
+# TRAIN_RANGE_BY_DATEID = (1334, 5351) # (2015-01-05, 2022-12-30)
+# VALID_RANGE_BY_DATEID = (5356, 5715) # (2023-01-04, 2023-12-29)
+# EVAL_RANGE_BY_DATEID  = (5721, 6447) # (2024-01-04, 2025-12-30)
 
 # select * from '..\parquet\dateID.parquet' where dateID in [2435, 5351, 5356, 5715, 5721, 6447] order by tfID;
 # ┌───────┬────────────┬────────┬───────┬───────┐
@@ -140,12 +149,20 @@ EVAL_RANGE_BY_DATEID  = (5721, 6447) # (2024-01-04, 2025-12-30)
 # │  3834 │ 2024-01-04 │   5721 │     1 │     0 │
 # │  4321 │ 2025-12-30 │   6447 │     0 │     1 │
 # └───────┴────────────┴────────┴───────┴───────┘
-TRAIN_RANGE_BY_TFID = (1634, 3587) # (2015-01-05, 2022-12-30)
-VALID_RANGE_BY_TFID = (3588, 3833) # (2023-01-04, 2023-12-29)
-EVAL_RANGE_BY_TFID  = (3834, 4321) # (2024-01-04, 2025-12-30)
-TRAIN_LENGTH = TRAIN_RANGE_BY_TFID[1] - TRAIN_RANGE_BY_TFID[0] + 1
-VALID_LENGTH = VALID_RANGE_BY_TFID[1] - VALID_RANGE_BY_TFID[0] + 1
-EVAL_LENGTH  = EVAL_RANGE_BY_TFID[1]  - EVAL_RANGE_BY_TFID[0]  + 1
+# TRAIN_RANGE_BY_TFID = (1634, 3587) # (2015-01-05, 2022-12-30)
+# VALID_RANGE_BY_TFID = (3588, 3833) # (2023-01-04, 2023-12-29)
+# EVAL_RANGE_BY_TFID  = (3834, 4321) # (2024-01-04, 2025-12-30)
+
+TRAIN_RANGE_TID = (2856, 2934) # (2020-01-06, 2020-04-30)
+VALID_RANGE_TID = (2953, 2974) # (2020-06-01, 2020-06-30)
+EVAL_RANGE_TID  = (2975, 2995) # (2020-07-01, 2020-07-31)
+
+TRAIN_LENGTH = TRAIN_RANGE_TID[1] - TRAIN_RANGE_TID[0] + 1
+VALID_LENGTH = VALID_RANGE_TID[1] - VALID_RANGE_TID[0] + 1
+EVAL_LENGTH  = EVAL_RANGE_TID[1]  - EVAL_RANGE_TID[0]  + 1
+
+USE_MIN_TID = TRAIN_RANGE_TID[0]
+USE_MAX_TID = EVAL_RANGE_TID[1]
 
 # feature type definition
 NP_FLOAT32 = np.float32
@@ -161,7 +178,7 @@ GET_TID_QUERY = \
 f"""\
 select tID \
 from act.tools.date_tool \
-where tID between {USE_MIN_TFID} and {USE_MAX_TFID} \
+where tID between {USE_MIN_TID} and {USE_MAX_TID} \
 order by tID;\
 """
 
@@ -184,7 +201,7 @@ order by ${src_ntNm}_gnID, ${tgt_ntNm}_gnID;
 
 SET_NODES_QUERY = Template( 
 """
-select gnID, seq
+select gnID, seq, seq_len
 from act.seq.node
 where ntID = ${ntID} and tID ${cond} ${tID}
 order by gnID;

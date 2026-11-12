@@ -44,7 +44,7 @@ class MarketDataset(Dataset):
 
     @property
     def processed_file_names(self):
-        return [f'data_{dateID}.pt' for dateID in range(c.USE_MIN_TFID, c.USE_MAX_TFID + 1)] # default range : 1 to 6448
+        return [f'data_{dateID}.pt' for dateID in range(c.USE_MIN_TID, c.USE_MAX_TID + 1)] # default range : 1 to 6448
 
     def pre_process(self) -> Dict[str, np.ndarray]:
         # set "corr" edge
@@ -76,15 +76,16 @@ class MarketDataset(Dataset):
         pre_process_results = self.pre_process()
 
         # Set up labels for eval nodes
-        h.set_labels(self.conn)
+        returns = h.get_labels(self.conn)
+        h.set_labels(returns)
 
         # Create HeteroData objects for each dateID
-        print(f"Creating HeteroData objects for tIDs in range [{c.USE_MIN_TFID}, {c.USE_MAX_TFID}]...")
+        print(f"Creating HeteroData objects for tIDs in range [{c.USE_MIN_TID}, {c.USE_MAX_TID}]...")
         for i, tID in enumerate(tIDs, 1):
-            if not (tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID): 
+            if not (tID < c.USE_MIN_TID or tID > c.USE_MAX_TID): 
                 data = HeteroData()
                 h.set_edges(self.conn, tID, data, pre_process_results)
-                h.set_nodes(self.conn, tID, data, node_data_master)
+                h.set_nodes(self.conn, tID, data, node_data_master, returns)
                 torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
             print(f'\r[{i:4d}/{len(tIDs)}] Processed tID: {tID}', end='')
         print("\ncreated Graph Objects over all tIDs.")
@@ -93,7 +94,8 @@ class MarketDataset(Dataset):
         return len(self.processed_file_names)
 
     def get(self, tID:int) -> HeteroData:
-        if tID < c.USE_MIN_TFID or tID > c.USE_MAX_TFID:
+        # if tID < c.USE_MIN_TID or tID > c.USE_MAX_TID:
+        if tID < 2856 or tID > 2858:
             raise IndexError("Index out of range")
         data_path = os.path.join(self.processed_dir, f'data_{tID}.pt')
         data = torch.load(data_path, weights_only=False)

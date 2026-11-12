@@ -47,10 +47,10 @@ select count(*) from dev.id.node;
 
 
 -- step 0.
-drop view if exists stocks;
-drop view if exists statements;
-drop view if exists mktidx;
-drop view if exists futures;
+drop view if exists act.nodes.stock;
+drop view if exists act.nodes.statement;
+drop view if exists act.nodes.mktidx;
+drop view if exists act.nodes.future;
 
 -- step 1.
 
@@ -76,7 +76,7 @@ create view if not exists act.nodes.stock as(
         on o.code = n.code and o.tradeDate = n.tradeDate and n.ntID = 0
         join dev.id.date as t
         on o.tradeDate = t.tradeDate
-    ) as 1o
+    ) as o
     join act.tools.node_tool as n
     on o.tID = n.tID and o.gnID = n.gnID
     order by tID, ntID, cID
