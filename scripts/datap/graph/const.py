@@ -201,9 +201,16 @@ order by ${src_ntNm}_gnID, ${tgt_ntNm}_gnID;
 
 SET_NODES_QUERY = Template( 
 """
-select gnID, seq, seq_len
+select gnID, ntID, seq, seq_len
 from act.seq.node
-where ntID = ${ntID} and tID ${cond} ${tID}
+where
+(ntID=0 and tID=${tID})
+or
+(ntID=1 and tID<=${tID})
+or
+(ntID=2 and tID=${tID})
+or
+(ntID=3 and tID=${tID})
 order by gnID;
 """
 )

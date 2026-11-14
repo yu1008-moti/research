@@ -1,4 +1,4 @@
-from model.sample_conv import *
+from model.sample.sample_convle_conv import *
 
 class Classifier(nn.Module):
     def __init__(self, n_hid, n_out):

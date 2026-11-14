@@ -1,22 +1,26 @@
 import torch
-from torch import nn
 from torch_geometric.data import HeteroData
-from torch_geometric.data import InMemoryDataset, Dataset
-import pandas as pd
+from torch_geometric.data import Dataset
 import numpy as np
-from pathlib import Path
-from typing import Dict, List, Any, Tuple
+from typing import Dict
 import duckdb as sql
+import os
+from datetime import datetime as dt
 
 import scripts.datap.graph.stock_corr_stock  as stock_corr_stock
 import scripts.datap.graph.const as c
-from scripts.datap.graph.sampling import HGTsampling
 import scripts.datap.graph.dataset_helper as h
-import os
+from scripts.datap.graph.dataset_helper import NodeDataMaster
 
 
 __all__ = ['MarketDataset']
 
+
+GREEN = '\033[92m'
+MAGENTA = '\033[95m'
+CYAN = '\033[96m'
+END = '\033[0m'
+    
 
 class MarketDataset(Dataset):
     def __init__(
@@ -70,7 +74,7 @@ class MarketDataset(Dataset):
         tIDs = h.get_tIDs(self.conn)
 
         # Load all node data for all node types into memory to avoid repeated database queries
-        node_data_master = h.get_node_data_master(self.conn)
+        node_data_master = NodeDataMaster(self.conn)
 
         # pre-process the correlation edge data and save it to a file for later use
         pre_process_results = self.pre_process()
@@ -80,22 +84,26 @@ class MarketDataset(Dataset):
         h.set_labels(returns)
 
         # Create HeteroData objects for each dateID
-        print(f"Creating HeteroData objects for tIDs in range [{c.USE_MIN_TID}, {c.USE_MAX_TID}]...")
+        print(f"{CYAN}Creating HeteroData objects for tIDs in range [{c.USE_MIN_TID}, {c.USE_MAX_TID}]{END}")
         for i, tID in enumerate(tIDs, 1):
             if not (tID < c.USE_MIN_TID or tID > c.USE_MAX_TID): 
                 data = HeteroData()
                 h.set_edges(self.conn, tID, data, pre_process_results)
                 h.set_nodes(self.conn, tID, data, node_data_master, returns)
                 torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
-            print(f'\r[{i:4d}/{len(tIDs)}] Processed tID: {tID}', end='')
-        print("\ncreated Graph Objects over all tIDs.")
+            print(f'\r[{i:4d}/{len(tIDs)}] Processed tID: {tID}', end=' ')
+        print("\n[created Graph Objects over all tIDs]")
+
+    def graph_consecutive_check(self) -> bool:
+        return h.check_lnIDs_constraint(self.processed_dir)
 
     def len(self):
         return len(self.processed_file_names)
 
-    def get(self, tID:int) -> HeteroData:
+    def get(self, idx:int) -> HeteroData:
         # if tID < c.USE_MIN_TID or tID > c.USE_MAX_TID:
-        if tID < 2856 or tID > 2858:
+        tID = c.USE_MIN_TID + idx
+        if tID < c.USE_MIN_TID or tID > c.USE_MAX_TID:
             raise IndexError("Index out of range")
         data_path = os.path.join(self.processed_dir, f'data_{tID}.pt')
         data = torch.load(data_path, weights_only=False)

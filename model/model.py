@@ -14,17 +14,14 @@ DEVICE = c.DEVICE
 
 def get_data_attr(data:HeteroData):
     # check order of lnIDs
-    lnIDs      = torch.cat([data[nt].lnID for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-    assert sum(lnIDs[1:] - lnIDs[:-1] != 1) == 0, "lnIDs should be consecutive integers"
     x          = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
-    lnIDs      = [data[nt].lnID for nt in c.HETERO_NODE_TYPES] # it use for check order of lnIDs and index
     ntIDs      = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
     target     = data['stock'].target.to(c.DEVICE)
     seq_len    = torch.cat([data[nt].seq_len for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
     edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
     etIDs      = torch.cat([data[edge_type].etID         for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
 
-    return x, lnIDs, seq_len, edge_index, ntIDs, etIDs, target
+    return x, seq_len, edge_index, ntIDs, etIDs, target
 
 
 class Classifier(nn.Module):
@@ -57,7 +54,7 @@ class myGRU(nn.Module):
             for in_dim in self.node_type_input_num.values()
         ])
 
-    def forward(self, x:List[torch.Tensor], lnIDs:List[torch.Tensor], seq_len:List[torch.Tensor], ntIDs: torch.Tensor) -> torch.Tensor:
+    def forward(self, x:List[torch.Tensor], seq_len:List[torch.Tensor], ntIDs: torch.Tensor) -> torch.Tensor:
 
         emb = torch.zeros(len(x[0])+len(x[1])+len(x[2])+len(x[3]), self.hidden_size, device=DEVICE)
 
@@ -90,10 +87,10 @@ class MarketHGTModel(nn.Module):
 
     def forward(self, data:HeteroData):
         # Get the data attributes
-        x, lnIDs, seq_len, edge_index, ntIDs, etIDs, target = get_data_attr(data)
+        x, seq_len, edge_index, ntIDs, etIDs, target = get_data_attr(data)
 
         # Pass through GRU
-        h = self.gru(x, lnIDs, seq_len, ntIDs)  # Assuming node_type_i represents the node types for GRU
+        h = self.gru(x, seq_len, ntIDs)  # Assuming node_type_i represents the node types for GRU
         # Pass through HGTConv
         h = self.hgt_conv(h, edge_index, ntIDs, etIDs)
 

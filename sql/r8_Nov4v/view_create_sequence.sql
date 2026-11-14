@@ -44,3 +44,18 @@ select count(*) - count(distinct (gnID)) as dup from act.seq.node;
 COMMENT ON VIEW act.seq.node IS 'this seq means the gnID seq for all nodes.';
 
 select database_name, schema_name, view_name, comment from duckdb_views() where not internal;
+
+-- to avoid take too long time, create table
+
+create table act.seq.node as
+select
+    o.gnID, t.tID, n.ntID, o.seq, length(o.seq) as seq_len
+from (
+    select * from dev.seq.stocks
+    union all select * from dev.seq.statements
+    union all select * from dev.seq.mktidx
+    union all select * from dev.seq.futures
+) as o
+join dev.id.node as n on o.gnID = n.gnID
+join dev.id.date as t on n.tradeDate = t.tradeDate
+order by ntID, tID, gnID;   -- この並びが肝。zone map で他の tID の行グループを飛ばせる
