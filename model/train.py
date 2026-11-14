@@ -90,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument("--dropout"   , type=float, default=0.1   , help="Dropout rate.")
     parser.add_argument("--patience"  , type=int  , default=10    , help="Number of epochs to stop training early.")
     parser.add_argument("--epochs"    , type=int  , default=10000 , help="Number of epochs to train.")
-    parser.add_argument("--batch-size", type=int  , default=32    , help="Batch size for training.")
+    parser.add_argument("--batch-size", type=int  , default=16    , help="Batch size for training.")
     parser.add_argument("--min-delta" , type=float, default=10e-5 , help="Number of epochs to stop training early.")
     parser.add_argument("--num-layer" , type=int  , default=2     , help="Number of GNN layers.")
     parser.add_argument("--lr"        , type=float, default=0.001 , help="Learning rate.")
