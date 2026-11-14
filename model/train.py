@@ -108,8 +108,8 @@ if __name__ == "__main__":
 
     # Load the dataset by get-method with tfID
     dataset = MarketDataset(root="pt")
-    # if not dataset.graph_consecutive_check():  # Ensure that the graph data is consecutive and valid
-    #     raise ValueError("The graph data is not consecutive or valid.")
+    if not dataset.graph_consecutive_check():  # Ensure that the graph data is consecutive and valid
+        raise ValueError("The graph data is not consecutive or valid.")
 
     optimizer = Adam(model.parameters(), lr=args.lr)
     criterion = CrossEntropyLoss()
