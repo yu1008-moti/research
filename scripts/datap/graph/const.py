@@ -22,12 +22,13 @@ CORR_EDGE_INFO_PATH = Path("scripts/datap/graph/processed/corr_edge_info.npz")
 
 
 HETERO_EDGE_UNIT: Dict[str, Tuple[str, str]] = {
-    "corr"           : ('stock' , 'stock'),
-    "made_up_mkt"    : ('stock' , 'mktidx'),
-    "made_up_topix"  : ('stock' , 'mktidx'),
-    "made_up_s17"    : ('stock' , 'mktidx'),
-    "recent_report"  : ('stock' , 'statement'),
-    "mktidx_future"  : ('mktidx', 'future')
+    # r: (src_ntNm, tgt_ntNm)
+    "corr"           : ("stock"     , "stock"),
+    "recent_report"  : ("statement" , "stock"),
+    "made_up_mkt"    : ("mktidx"    , "stock"),
+    "made_up_topix"  : ("mktidx"    , "stock"),
+    "made_up_s17"    : ("mktidx"    , "stock"),
+    "mktidx_future"  : ("future"    , "mktidx")
 }
 
 HETERO_NODE_TYPES: List[str] = [
@@ -40,20 +41,21 @@ HETERO_NODE_TYPES: List[str] = [
 
 HETERO_EDGE_TYPES: List[str] = [
     'corr',
+    'recent_report',
     'made_up_mkt',
     'made_up_topix',
     'made_up_s17',
-    'recent_report',
     'mktidx_future'
 ]
 
 HETERO_EDGE_UNIT_ID: List[Tuple[int, int, int]] = [
+    # (i, j, r) = (source_node_type_id, target_node_type_id, edge_type_id)
     (0, 0, 0),  # corr: stock -> stock
-    (0, 1, 1),  # recent_report: stock -> statement
-    (0, 1, 2),  # made_up_mkt: stock -> mktidx
-    (0, 1, 3),  # made_up_topix: stock -> mktidx
-    (0, 1, 4),  # made_up_s17: stock -> mktidx
-    (2, 3, 5)   # mktidx_future: mktidx -> future
+    (1, 0, 1),  # recent_report: statement -> stock
+    (2, 0, 2),  # made_up_mkt: mktidx -> stock
+    (2, 0, 3),  # made_up_topix: mktidx -> stock
+    (2, 0, 4),  # made_up_s17: mktidx -> stock
+    (3, 2, 5)   # mktidx_future: mktidx -> future
 ]
 
 HETERO_NODE_ID: Dict[str, int] = {
@@ -65,10 +67,10 @@ HETERO_NODE_ID: Dict[str, int] = {
 
 HETERO_EDGE_ID: Dict[str, int] = {
     'corr'           : 0,
-    'made_up_mkt'    : 1,
-    'made_up_topix'  : 2,
-    'made_up_s17'    : 3,
-    'recent_report'  : 4,
+    'recent_report'  : 1,
+    'made_up_mkt'    : 2,
+    'made_up_topix'  : 3,
+    'made_up_s17'    : 4,
     'mktidx_future'  : 5
 }
 

@@ -13,7 +13,7 @@ EDGE_TYPES:List[str] = ['corr', 'made_up_Mkt', 'made_up_topix', 'made_up_s33', '
 
 class MarketHGTConv(MessagePassing):
     def __init__(self, in_hid:int, out_hid:int, num_head:int, dropout:float):
-        super().__init__(aggr='add', node_dim=0)  # "Add" aggregation.
+        super().__init__(aggr='add', node_dim=0, flow='source_to_target')  # "Add" aggregation.
 
         self.in_hid = in_hid
         self.out_hid = out_hid
@@ -40,9 +40,9 @@ class MarketHGTConv(MessagePassing):
     
     def forward(self, x, edge_index, ntIDs, etIDs):
         # x has shape [N, in_hid]
-        return self.propagate(edge_index, x=x, node_type=ntIDs, etIDs=etIDs)
+        return self.propagate(edge_index, x=x, ntIDs=ntIDs, etIDs=etIDs)
 
-    def message(self, edge_index_i: torch.Tensor, x_i: torch.Tensor, x_j: torch.Tensor, node_type_i: torch.Tensor, node_type_j: torch.Tensor, etIDs: torch.Tensor):
+    def message(self, edge_index_i: torch.Tensor, x_i: torch.Tensor, x_j: torch.Tensor, ntIDs_i: torch.Tensor, ntIDs_j: torch.Tensor, etIDs: torch.Tensor):
         # x_j has shape [E, in_hid]
         # i : center node
         # j : neighbor node
@@ -55,7 +55,7 @@ class MarketHGTConv(MessagePassing):
         res_msg = torch.zeros(x_i.size(0), self.num_head, self.d_k).to(device)
 
         for i, j, r in c.HETERO_EDGE_UNIT_ID:
-            edge_idx = (node_type_i == i) & (node_type_j == j) & (etIDs == r)
+            edge_idx = (ntIDs_i == i) & (ntIDs_j == j) & (etIDs == r)
 
             if sum(edge_idx) == 0: continue
 
@@ -80,12 +80,12 @@ class MarketHGTConv(MessagePassing):
         del res_att, res_msg
         return out.view(-1, self.out_hid)
 
-    def update(self, aggr_out, node_type, x):
+    def update(self, aggr_out, ntIDs, x):
         aggr_out = F.gelu(aggr_out)
         aggr_res = torch.zeros(x.size(0), self.out_hid, device=x.device)
 
         for i in c.HETERO_NODE_ID.values():
-            target_idx = (node_type == i)
+            target_idx = (ntIDs == i)
             trans_out = self.drop(self.a_linears[i](aggr_out[target_idx]))
 
             alpha = F.sigmoid(self.skip[i])

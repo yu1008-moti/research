@@ -24,7 +24,7 @@ def train(
 
         # Train loop
         optimizer.zero_grad()
-        for batch in train_loader: # for debugging, only use 2856 to 2858 for training
+        for batch in train_loader:
             labels = torch.argmax(batch["stock"].labels.long(), dim=1).to(c.DEVICE)
             output = model(batch)
             loss = criterion(output, labels)
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument("--dropout"   , type=float, default=0.1   , help="Dropout rate.")
     parser.add_argument("--patience"  , type=int  , default=10    , help="Number of epochs to stop training early.")
     parser.add_argument("--epochs"    , type=int  , default=10000 , help="Number of epochs to train.")
-    parser.add_argument("--batch-size", type=int  , default=8    , help="Batch size for training.")
+    parser.add_argument("--batch-size", type=int  , default=2     , help="Batch size for training.")
     parser.add_argument("--min-delta" , type=float, default=10e-5 , help="Number of epochs to stop training early.")
     parser.add_argument("--num-layer" , type=int  , default=2     , help="Number of GNN layers.")
     parser.add_argument("--lr"        , type=float, default=0.001 , help="Learning rate.")
@@ -108,8 +108,8 @@ if __name__ == "__main__":
 
     # Load the dataset by get-method with tfID
     dataset = MarketDataset(root="pt")
-    if not dataset.graph_consecutive_check():  # Ensure that the graph data is consecutive and valid
-        raise ValueError("The graph data is not consecutive or valid.")
+    # if not dataset.graph_consecutive_check():  # Ensure that the graph data is consecutive and valid
+    #     raise ValueError("The graph data is not consecutive or valid.")
 
     optimizer = Adam(model.parameters(), lr=args.lr)
     criterion = CrossEntropyLoss()

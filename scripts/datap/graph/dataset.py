@@ -2,7 +2,7 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.data import Dataset
 import numpy as np
-from typing import Dict
+from typing import Dict, Optional
 import duckdb as sql
 import os
 from datetime import datetime as dt
@@ -13,14 +13,42 @@ import scripts.datap.graph.dataset_helper as h
 from scripts.datap.graph.dataset_helper import NodeDataMaster
 
 
-__all__ = ['MarketDataset']
+__all__ = ['MarketDataset', 'MarketData']
 
 
 GREEN = '\033[92m'
 MAGENTA = '\033[95m'
 CYAN = '\033[96m'
 END = '\033[0m'
-    
+
+
+class MarketData(HeteroData):
+    """HeteroData with a custom __inc__.
+
+    PyG's Batch re-instantiates this class with no arguments on every
+    collate, so __init__ must be callable without args (inherit as-is).
+    """
+
+    @classmethod
+    def from_hetero(cls, data: HeteroData) -> "MarketData":
+        """Convert an existing HeteroData (e.g. from old processed/*.pt)."""
+        out = cls()
+        # copy node / edge stores as they are
+        for node_type, store in data.node_items():
+            out[node_type].update(store)
+        for edge_type, store in data.edge_items():
+            out[edge_type].update(store)
+        # graph-level attributes (if any)
+        for key, value in data._global_store.items():
+            out[key] = value
+        return out
+
+    def __inc__(self, key, value, *args, **kwargs):
+        if key == 'edge_index':
+            # offset = total node count over ALL node types (global indexing)
+            return torch.tensor([[self.num_nodes], [self.num_nodes]])
+        return 0
+
 
 class MarketDataset(Dataset):
     def __init__(
@@ -87,7 +115,7 @@ class MarketDataset(Dataset):
         print(f"{CYAN}Creating HeteroData objects for tIDs in range [{c.USE_MIN_TID}, {c.USE_MAX_TID}]{END}")
         for i, tID in enumerate(tIDs, 1):
             if not (tID < c.USE_MIN_TID or tID > c.USE_MAX_TID): 
-                data = HeteroData()
+                data = MarketData()
                 h.set_edges(self.conn, tID, data, pre_process_results)
                 h.set_nodes(self.conn, tID, data, node_data_master, returns)
                 torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
@@ -100,11 +128,11 @@ class MarketDataset(Dataset):
     def len(self):
         return len(self.processed_file_names)
 
-    def get(self, idx:int) -> HeteroData:
+    def get(self, idx:int) -> MarketData:
         # if tID < c.USE_MIN_TID or tID > c.USE_MAX_TID:
         tID = c.USE_MIN_TID + idx
         if tID < c.USE_MIN_TID or tID > c.USE_MAX_TID:
             raise IndexError("Index out of range")
         data_path = os.path.join(self.processed_dir, f'data_{tID}.pt')
         data = torch.load(data_path, weights_only=False)
-        return data
+        return MarketData.from_hetero(data) # data

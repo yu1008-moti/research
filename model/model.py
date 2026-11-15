@@ -13,13 +13,12 @@ NUM_LABELS = c.NUM_LABELS  # Assuming 3 classes for classification
 DEVICE = c.DEVICE
 
 def get_data_attr(data:HeteroData):
-    # check order of lnIDs
-    x          = [data[nt].x for nt in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
-    ntIDs      = torch.cat([data[nt].ntID    for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+    x          = [data[node_type].x for node_type in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
     target     = data['stock'].target.to(c.DEVICE)
-    seq_len    = torch.cat([data[nt].seq_len for nt in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+    ntIDs      = torch.cat([data[node_type].ntID       for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+    seq_len    = torch.cat([data[node_type].seq_len    for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
     edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
-    etIDs      = torch.cat([data[edge_type].etID         for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
+    etIDs      = torch.cat([data[edge_type].etID       for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
 
     return x, seq_len, edge_index, ntIDs, etIDs, target
 
