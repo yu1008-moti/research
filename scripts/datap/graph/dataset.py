@@ -133,6 +133,4 @@ class MarketDataset(Dataset):
         return len(self.processed_file_names)
 
     def get(self, idx:int) -> MarketData:
-        return MarketData.from_hetero(
-            torch.load(Path(f'{self.processed_dir}/{self.processed_file_names[idx]}'), weights_only=False)
-        )
+        return torch.load(Path(f'{self.processed_dir}/{self.processed_file_names[idx]}'), weights_only=False)
