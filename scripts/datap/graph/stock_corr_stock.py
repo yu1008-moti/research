@@ -125,10 +125,17 @@ def get_corr_edge(capm_data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, np.n
     for i, (t, edge_indices, edge_values) in enumerate(_calc_corr_matrix(pivot_tensor), 1):
         t = tIDs[t]
         lnIDs_t = lnIDs.loc[lnIDs['tID'] == t, ['cID', 'lnID']].set_index('cID')['lnID']
-        expanded_lnIDs_t = torch.tensor(lnIDs_t.reindex(cIDs, fill_value=torch.nan).to_numpy(), dtype=torch.int32)  # Fill missing cIDs with -1
+        # cIDs absent on day t (not listed / no residual) get -1; NaN -> int cast would yield INT32_MIN
+        expanded_lnIDs_t = torch.tensor(
+            lnIDs_t.reindex(cIDs).fillna(-1).to_numpy(), dtype=torch.long
+        )
         if edge_indices.shape[1] > 0:
-            edge_indices[0] = expanded_lnIDs_t[edge_indices[0]]
-            edge_indices[1] = expanded_lnIDs_t[edge_indices[1]]
+            src = expanded_lnIDs_t[edge_indices[0]]
+            dst = expanded_lnIDs_t[edge_indices[1]]
+            valid = (src >= 0) & (dst >= 0)  # drop edges touching stocks that don't exist on day t
+            edge_indices = torch.stack([src[valid], dst[valid]], dim=0)
+            edge_values = edge_values[valid]
+        if edge_indices.shape[1] > 0:
             edge_index_list.append(edge_indices)
             attr_list.append(edge_values)
             tIDs_list.append(torch.full((edge_values.shape[0],), t, dtype=torch.int16))

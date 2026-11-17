@@ -2,10 +2,11 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.data import Dataset
 import numpy as np
-from typing import Dict, Optional
+from typing import Dict
 import duckdb as sql
 import os
 from datetime import datetime as dt
+from pathlib import Path
 
 import scripts.datap.graph.stock_corr_stock  as stock_corr_stock
 import scripts.datap.graph.const as c
@@ -73,6 +74,9 @@ class MarketDataset(Dataset):
         finally:
             if hasattr(self, 'conn'):
                 self.conn.close()
+                # DuckDBPyConnection is not picklable; drop it so that
+                # DataLoader(num_workers>0) can pickle this Dataset (spawn).
+                del self.conn
 
     @property
     def processed_file_names(self):
@@ -129,10 +133,6 @@ class MarketDataset(Dataset):
         return len(self.processed_file_names)
 
     def get(self, idx:int) -> MarketData:
-        # if tID < c.USE_MIN_TID or tID > c.USE_MAX_TID:
-        tID = c.USE_MIN_TID + idx
-        if tID < c.USE_MIN_TID or tID > c.USE_MAX_TID:
-            raise IndexError("Index out of range")
-        data_path = os.path.join(self.processed_dir, f'data_{tID}.pt')
-        data = torch.load(data_path, weights_only=False)
-        return MarketData.from_hetero(data) # data
+        return MarketData.from_hetero(
+            torch.load(Path(f'{self.processed_dir}/{self.processed_file_names[idx]}'), weights_only=False)
+        )

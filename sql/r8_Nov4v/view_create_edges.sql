@@ -13,7 +13,7 @@ drop view if exists act.edges.mktidx_future;
 -- centralized views for edges
 
 create view if not exists act.edges.recent_report as(
-    select * from dev.edge.recent_report_v2 order by tID, statement_lnID, stock_lnID
+    select * from dev.edge.recent_report order by tID, statement_lnID, stock_lnID
 );
 
 comment on view act.edges.recent_report is 'this edge means the relationship between stock(target) and statement(souruce).';
@@ -34,7 +34,7 @@ select count(*) - count(distinct (tID, statement_cID, stock_cID)) = 0 as dup_typ
 -- select count(*) - count(distinct (tID, stock_cID, mktidx_cID)) = 0 as dup_type1 from act.edges.made_up_s33;
 
 create view if not exists act.edges.made_up_s17 as(
-    select * from dev.edge.made_up_s17_v2 order by tID, stock_lnID, mktidx_lnID
+    select * from dev.edge.made_up_s17 order by tID, stock_lnID, mktidx_lnID
 );
 
 comment on view act.edges.made_up_s17 is 'this edge means the relationship between stock(target) and mktidx(souruce). this mktidx means only s17 holds.';
@@ -42,7 +42,7 @@ comment on view act.edges.made_up_s17 is 'this edge means the relationship betwe
 select count(*) - count(distinct (tID, stock_cID, mktidx_cID)) = 0 as dup_type1 from act.edges.made_up_s17;
 
 create view if not exists act.edges.made_up_mkt as(
-    select * from dev.edge.made_up_mkt_v2 order by tID, stock_lnID, mktidx_lnID
+    select * from dev.edge.made_up_mkt order by tID, stock_lnID, mktidx_lnID
 );
 
 comment on view act.edges.made_up_mkt is 'this edge means the relationship between stock(target) and mktidx(souruce). this mktidx means only prime / standard / growth / jasdaq / tosho1 / tosho2 .';
@@ -50,7 +50,7 @@ comment on view act.edges.made_up_mkt is 'this edge means the relationship betwe
 select count(*) - count(distinct (tID, stock_cID, mktidx_cID)) = 0 as dup_type1 from act.edges.made_up_mkt;
 
 create view if not exists act.edges.made_up_topix as(
-    select * from dev.edge.made_up_topix_v2 order by tID, stock_lnID, mktidx_lnID
+    select * from dev.edge.made_up_topix order by tID, stock_lnID, mktidx_lnID
 );
 
 comment on view act.edges.made_up_topix is 'this edge means the relationship between stock(target) and mktidx(souruce). this mktidx means only topix.';
@@ -58,7 +58,7 @@ comment on view act.edges.made_up_topix is 'this edge means the relationship bet
 select count(*) - count(distinct (tID, stock_cID, mktidx_cID)) = 0 as dup_type1 from act.edges.made_up_topix;
 
 create view if not exists act.edges.mktidx_future as(
-    select * from dev.edge.mktidx_future_v2 order by tID, future_lnID, mktidx_lnID
+    select * from dev.edge.mktidx_future order by tID, future_lnID, mktidx_lnID
 );
 
 comment on view act.edges.mktidx_future is 'this edge means the relationship between mktidx(target) and future(souruce). this mktidx means only topix, future means only topixf.';
