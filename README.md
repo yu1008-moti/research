@@ -59,7 +59,7 @@ uv run build_db_main.py convert drv -f
 
 ## プロジェクト内 Markdown ファイル一覧
 
-リポジトリ内に存在する全 Markdown ファイルのパスと内容サマリ（2026-09-17 時点）。
+リポジトリ内に存在する主要な Markdown ファイルのパスと内容サマリ（2026-10-11 時点。モデル・データ構築フローの再構築に伴い旧フロー関連の文書は整理済み）。
 
 ### 指示・設定ファイル
 
@@ -68,15 +68,11 @@ uv run build_db_main.py convert drv -f
 | [`CLAUDE.md`](CLAUDE.md) | Claude Code 向けのリポジトリ運用指示（英語・正本）。プロジェクト概要・コマンド一覧・ディレクトリマップ・このリポジトリ特有の注意点（`graph_v2`残骸バグ，DuckDBの`data_list`規約，per-codeループ禁止，ログ出力先など）をまとめている。 |
 | [`CLAUDE.ja.md`](CLAUDE.ja.md) | `CLAUDE.md`の日本語対訳（人間向け）。内容は同一で、`CLAUDE.md`更新時に同期する運用。 |
 
-### `claude_output/` — Claude Code セッションの実装報告・調査レポート
+### `claude_output/` — Claude Code セッションの仕様書・調査レポート
 
 | パス | サマリ |
 |---|---|
-| [`claude_output/graph_spec.md`](claude_output/graph_spec.md) | `scripts/datap/graph/`配下（`data_pipeline.py`・`capm_corr.py`・`derivative_corr.py`・`cons.py`・`sql.py`・`main.py`）の全関数・全クラスのシグネチャ・処理内容・前提条件・副作用を網羅した関数レベル仕様書。4ノードタイプ（stock/statement/option/future）・12エッジタイプの構造や`graph_v2`改称の経緯にも言及。 |
-| [`claude_output/derivative_nodes_edges_implementation.md`](claude_output/derivative_nodes_edges_implementation.md) | オプション・先物ノードとその関連6エッジタイプを追加した実装報告。ダングリングエッジバグと`option_prev_option_preprocess`の性能問題（約30分→数秒）の発見・修正、`graph_params`へのハイパーパラメータ一元化を記録。 |
-| [`claude_output/heterodata_batch_output_explained.md`](claude_output/heterodata_batch_output_explained.md) | `NeighborLoader`が返す`HeteroData`バッチのprint出力の読み方（`x=[N,D]`はshapeであること等）を解説。`stock,derivative,future`エッジのハブ構造や`num_neighbors`均一設定など今後のチューニング論点も記載。 |
-| [`claude_output/baseline_training_resource_analysis.md`](claude_output/baseline_training_resource_analysis.md) | `model/baseline/`学習時のGPU/CPU/RAMリソースを実測したレポート。GPUメモリは実質無視できる水準（<200MB）で、ボトルネックはCPU側`NeighborLoader`サンプリングにあると結論。`num_workers`導入（2.5倍高速化）や`pin_memory`検証（不採用）も記録。 |
-| [`claude_output/reports/train_bottleneck_investigation_20260916.md`](claude_output/reports/train_bottleneck_investigation_20260916.md) | `torch.profiler`を用いたAdam.stepボトルネック調査。「Self CUDA 37%」が表示上のアーティファクトだったこと、実コストは`aten::mm`とEmbedding backwardが中心であること、GPUメモリ懸念の誤解の解消などを記録。 |
+| [`claude_output/graph_spec.md`](claude_output/graph_spec.md) | 再構築中のデータ構築フロー仕様（`db_connect.py` → `dataset.py` → `preprocess/*`）。実在するコードのみを記述し、未実装箇所と既知の不整合も列挙。旧仕様は git 履歴を参照。 |
 
 ### `md/` — データ調査・設計メモ（データ処理用スクラッチ）
 
@@ -96,14 +92,14 @@ uv run build_db_main.py convert drv -f
 
 | パス | サマリ |
 |---|---|
-| [`model/README.md`](model/README.md) | `model/`配下の運用ルールとグラフデータ（`HeteroData`）リファレンス。ノード/エッジタイプ一覧、ラベル(`y`/`y_valid`)の扱い、既知のNaN・スケール問題、`train.py`/`eval.py`の規約をまとめた頻用参照ドキュメント。 |
-| [`model/baseline/model_structure.md`](model/baseline/model_structure.md) | `write_model_structure_md()`による`BaselineHeteroGNN`のモジュール階層自動生成ドキュメント（Mermaid図）。`train.py`実行毎に上書き。 |
+| [`model/README.md`](model/README.md) | `model/`配下の運用ルール（`model/<alias>/` 構成、`train.py`/`eval.py` の共通引数、ログ・保存物の置き場）。旧 `HeteroData` リファレンスは再構築に伴い破棄。 |
 
 ### その他
 
 | パス | サマリ |
 |---|---|
-| [`fix_error_report.md`](fix_error_report.md) | Marp形式のスライドメモ。東証・大証統合による決算-株価データ不整合、`train.py`のACCESS_VIOLATIONクラッシュの切り分けと対策（`build_graph_cache_main.py`分離）、HGT論文との比較検討・`HGTLoader`導入見送り、`batch_size`増加によるNeighborLoaderオーバーヘッド削減（37分→2.75分）の検討記録。 |
+| [`scripts/datap/graph/dscribe.md`](scripts/datap/graph/dscribe.md) | 学習データ構築方法の個人メモ（使用期間、前処理をディスク保存前に行う理由、カテゴリ/日付マッピング）。 |
+| [`md/my_memo/labeling_memo.md`](md/my_memo/labeling_memo.md) | ラベル `y`（翌営業日リターン）を3クラスに分ける検討クエリと分位点・クラス比率の実測。 |
 | [`notebooks/readme.md`](notebooks/readme.md) | `notebooks/`配下の全ファイルが閲覧不可設定である理由（著作権・個人情報保護のため）の説明。 |
-| [`sql/README.md`](sql/README.md) | `sql/`ディレクトリ全体の構成説明。`synthesis/`（生テーブル→中間テーブル変換、手動実行）と`graph/`（グラフ構築用、`sql.py`経由）の役割分担、パス管理は`cons.py`の`rel_sql`に集約する旨。 |
+| [`sql/README.md`](sql/README.md) | `sql/`ディレクトリ全体の構成説明。`synthesis/`（生テーブル→中間テーブル変換、手動実行）・`graph/`（旧・週次）・`graph_v2/`（新・日次）の役割分担。 |
 | [`sql/synthesis/_description.md`](sql/synthesis/_description.md) | `sql/synthesis/`配下各SQLファイル（`equities_bars.sql`・`equities_investor-type.sql`・`futures.sql`・`options.sql`・`fin_summary.sql`・`indices_put_name.sql`・`margin_breakdown.sql`）の入出力テーブルとCTE単位の処理内容を詳細解説。`indices_put_name.sql`・`margin_breakdown.sql`に構文上の要修正点があることも指摘。 |

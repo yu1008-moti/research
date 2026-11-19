@@ -30,7 +30,22 @@ day2week AS (
   GROUP BY yearweek(f.TradeDate), f.Code
 )
 
-SELECT *
+SELECT 
+  week_id,
+  Code,
+  ProdCat,
+  SUBSTRING(CM, 1, 4) AS CM_year,
+  SUBSTRING(CM, 6, 7) AS CM_month,
+  AdjO,
+  AdjH,
+  AdjL,
+  AdjC,
+  AdjVo,
+  AdjVa,
+  AdjOI,
+  DeviationRate,
+  SQRemainingDays,
+  NULL_TYPE_1
 FROM day2week
 WHERE week_id > $START_WEEK_ID AND week_id < $END_WEEK_ID
 ORDER BY week_id, Code
