@@ -45,8 +45,8 @@ def train(
             loss = criterion(output, labels)
             epock_valid_losses.append(float(loss.to('cpu').detach().numpy()))
 
-        train_loss = sum(epock_train_losses)/batch_size
-        valid_loss = sum(epock_valid_losses)/batch_size
+        train_loss = sum(epock_train_losses)/len(epock_train_losses)
+        valid_loss = sum(epock_valid_losses)/len(epock_valid_losses)
 
         # Print epoch summary
         print(f'Epoch {e+1}/{epoch}')
