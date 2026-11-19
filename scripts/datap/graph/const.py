@@ -134,23 +134,7 @@ BETA = 'Rm'
 
 START_idX = 0
 END_idX = 1
-# reference: duckdb side processing
-# TRAIN_RANGE_BY_DATEID = (1334, 5351) # (2015-01-05, 2022-12-30)
-# VALID_RANGE_BY_DATEID = (5356, 5715) # (2023-01-04, 2023-12-29)
-# EVAL_RANGE_BY_DATEID  = (5721, 6447) # (2024-01-04, 2025-12-30)
 
-# select * from '..\parquet\dateID.parquet' where dateID in [2435, 5351, 5356, 5715, 5721, 6447] order by tfID;
-# ┌───────┬────────────┬────────┬───────┬───────┐
-# │ tfID  │ TradeDate  │ dateID │ train │ eval  │
-# │ int64 │    date    │ int64  │ int32 │ int32 │
-# ├───────┼────────────┼────────┼───────┼───────┤
-# │  1634 │ 2015-01-05 │   2435 │     1 │     0 │
-# │  3587 │ 2022-12-30 │   5351 │     1 │     0 │
-# │  3588 │ 2023-01-04 │   5356 │     1 │     0 │
-# │  3833 │ 2023-12-29 │   5715 │     1 │     0 │
-# │  3834 │ 2024-01-04 │   5721 │     1 │     0 │
-# │  4321 │ 2025-12-30 │   6447 │     0 │     1 │
-# └───────┴────────────┴────────┴───────┴───────┘
 TRAIN_RANGE_TID = (1634, 3587) # (2015-01-05, 2022-12-30)
 VALID_RANGE_TID = (3588, 3833) # (2023-01-04, 2023-12-29)
 EVAL_RANGE_TID  = (3834, 4321) # (2024-01-04, 2025-12-30)
@@ -159,9 +143,36 @@ EVAL_RANGE_TID  = (3834, 4321) # (2024-01-04, 2025-12-30)
 # VALID_RANGE_TID = (2953, 2974) # (2020-06-01, 2020-06-30)
 # EVAL_RANGE_TID  = (2975, 2995) # (2020-07-01, 2020-07-31)
 
-TRAIN_RANGE = (0             , 0              + (TRAIN_RANGE_TID[1] - TRAIN_RANGE_TID[0] + 1))
-VALID_RANGE = (TRAIN_RANGE[1], TRAIN_RANGE[1] + (VALID_RANGE_TID[1] - VALID_RANGE_TID[0] + 1))
-EVAL_RANGE  = (VALID_RANGE[1], VALID_RANGE[1] + (EVAL_RANGE_TID[1]  - EVAL_RANGE_TID[0]  + 1))
+_BASE = 1634
+
+_TID_SPLIT = [
+    (1634 - _BASE, 1877 - _BASE), # 2015-01-05, 2015-12-30
+    (1878 - _BASE, 2122 - _BASE), # 2016-01-04, 2016-12-30
+    (2123 - _BASE, 2369 - _BASE), # 2017-01-04, 2017-12-29
+    (2370 - _BASE, 2614 - _BASE), # 2018-01-04, 2018-12-28
+    (2615 - _BASE, 2855 - _BASE), # 2019-01-04, 2019-12-30
+    (2856 - _BASE, 3098 - _BASE), # 2020-01-06, 2020-12-30
+    (3099 - _BASE, 3343 - _BASE), # 2021-01-04, 2021-12-30
+    (3344 - _BASE, 3587 - _BASE), # 2022-01-04, 2022-12-30
+]
+
+TRAIN_SPLIT = [
+    (int(_TID_SPLIT[id][0]), int(_TID_SPLIT[id][1]*0.8)) for id in range(len(_TID_SPLIT))
+]
+
+VALID_SPLIT = [
+    (int(_TID_SPLIT[id][1]*0.8), _TID_SPLIT[id][1]) for id in range(len(_TID_SPLIT))
+]
+
+TEST_SPLIT = [
+    (3588 - _BASE, 4078 - _BASE), # 2023-01-04, 2024-12-30
+]
+
+
+
+# TRAIN_RANGE = (0             , 0              + (TRAIN_RANGE_TID[1] - TRAIN_RANGE_TID[0] + 1))
+# VALID_RANGE = (TRAIN_RANGE[1], TRAIN_RANGE[1] + (VALID_RANGE_TID[1] - VALID_RANGE_TID[0] + 1))
+# EVAL_RANGE  = (VALID_RANGE[1], VALID_RANGE[1] + (EVAL_RANGE_TID[1]  - EVAL_RANGE_TID[0]  + 1))
 
 USE_MIN_TID = TRAIN_RANGE_TID[0]
 USE_MAX_TID = EVAL_RANGE_TID[1]

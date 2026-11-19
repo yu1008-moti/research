@@ -113,7 +113,6 @@ class MarketDataset(Dataset):
 
         # Set up labels for eval nodes
         returns = h.get_labels(self.conn)
-        h.set_labels(returns)
 
         # Create HeteroData objects for each dateID
         print(f"{CYAN}Creating HeteroData objects for tIDs in range [{c.USE_MIN_TID}, {c.USE_MAX_TID}]{END}")

@@ -95,12 +95,15 @@ if __name__ == "__main__":
     parser.add_argument("--dropout"   , type=float, default=0.1   , help="Dropout rate.")
     parser.add_argument("--patience"  , type=int  , default=25    , help="Number of epochs to stop training early.")
     parser.add_argument("--epochs"    , type=int  , default=10000 , help="Number of epochs to train.")
-    parser.add_argument("--batch-size", type=int  , default=2     , help="Batch size for training.")
+    parser.add_argument("--batch-size", type=int  , default=4     , help="Batch size for training.")
     parser.add_argument("--min-delta" , type=float, default=10e-5 , help="Number of epochs to stop training early.")
     parser.add_argument("--num-layer" , type=int  , default=2     , help="Number of GNN layers.")
     parser.add_argument("--lr"        , type=float, default=0.001 , help="Learning rate.")
-    parser.add_argument('--k'         , type=int  , default=3     , help="Number of random samples to draw for each epoch.")
+    parser.add_argument('--k'         , type=int  , default=20    , help="Number of random samples to draw for each epoch.")
+    parser.add_argument("--train_id"  , type=int  , default=0     , help="Training ID for splitted training range.")
+
     parser.add_argument('--bidirectional', action='store_true', help="Use bidirectional GRU.")
+
     args = parser.parse_args()
 
     model = MarketHGTModel(
@@ -124,8 +127,8 @@ if __name__ == "__main__":
     smdl = SampledMarketDataLoader(
         dataset, 
         batch_size=args.batch_size,
-        train_ds_range=c.TRAIN_RANGE,
-        valid_ds_range=c.VALID_RANGE,
+        train_ds_range=c.TRAIN_SPLIT[args.train_id],
+        valid_ds_range=c.VALID_SPLIT[args.train_id],
         k=args.k
     )
     

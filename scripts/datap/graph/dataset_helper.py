@@ -80,7 +80,8 @@ def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: NodeDat
 
 
 def get_labels(conn: connect) -> pd.DataFrame:
-    returns = conn.execute("SELECT * from label.nxri;").df()
+    # returns = conn.execute("SELECT * from label.nxri;").df()
+    returns = conn.execute("SELECT * from dev.mytmp.label;").df()
     return returns
 
 def check_lnIDs_constraint(processed_dir: str) -> bool:
@@ -94,25 +95,3 @@ def check_lnIDs_constraint(processed_dir: str) -> bool:
     end_time = dt.now()
     print(f"[{GREEN}Graph consecutive check completed in: {end_time - start_time}{END}]")
     return True
-
-
-def set_labels(returns: pd.DataFrame) -> None:
-
-    train_mask = returns['tID'].between(c.TRAIN_RANGE_TID[0], c.TRAIN_RANGE_TID[1])
-    define_labels_samples = returns[train_mask]
-    num_define_labels_samples = len(define_labels_samples)
-
-    q1, q2 = int(num_define_labels_samples*1/3), int(num_define_labels_samples*2/3)
-
-    sorted_returns = define_labels_samples.sort_values(by='NxRi')
-    low_threshold, high_threshold = sorted_returns.iloc[q1]['NxRi'], sorted_returns.iloc[q2]['NxRi']
-
-    returns['neg'] = (returns['NxRi'] < low_threshold).astype(int)
-    returns['pos'] = (returns['NxRi'] > high_threshold).astype(int)
-    returns['neu'] = ((returns['NxRi'] >= low_threshold) & (returns['NxRi'] <= high_threshold)).astype(int)
-
-    print(f"\n{CYAN}REPORT: Labeling of returns based on thresholds{END}")
-    print(f"Number of samples used to define thresholds: {num_define_labels_samples}")
-    print(f"Label thresholds   : low={low_threshold}, high={high_threshold}")
-    print(f"Label distribution : neg={returns['neg'].sum()}, pos={returns['pos'].sum()}, neu={returns['neu'].sum()}")
-    print(f'(%) neg : neu : pos = {returns["neg"].sum()/len(returns):.5%} : {returns["neu"].sum()/len(returns):.5%} : {returns["pos"].sum()/len(returns):.5%}\n')

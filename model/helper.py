@@ -79,19 +79,17 @@ class SampledMarketDataLoader:
         self.batch_size = batch_size
         self.train_range = list(range(train_ds_range[0], train_ds_range[1]))
         self.valid_range = list(range(valid_ds_range[0], valid_ds_range[1]))
-        self.k = k  # Number of random samples to draw for each epoch5
+        self.k = k
 
 
-    def _get_random_indices(self) -> Tuple[List[int], List[int]]:
+    def _get_train_indices(self) -> List[int]: # not used
         train_indices = random.sample(self.train_range, self.k)
-        valid_indices = random.sample(self.valid_range, self.k)
-        return train_indices, valid_indices
+        return train_indices
 
 
     def get_loader(self) -> Tuple[DataLoader, DataLoader]:
-        train_idx, valid_idx = self._get_random_indices()
-        train_dataset = self.dataset.index_select(train_idx)
-        valid_dataset = self.dataset.index_select(valid_idx)
+        train_dataset = self.dataset.index_select(self.train_range)
+        valid_dataset = self.dataset.index_select(self.valid_range)
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True , pin_memory=True, num_workers=4)
         valid_loader = DataLoader(valid_dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True, num_workers=4)
         return train_loader, valid_loader
