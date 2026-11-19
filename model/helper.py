@@ -23,13 +23,9 @@ class EarlyStopping:
 
     def __call__(self, val_loss: float, model: torch.nn.Module):
         if val_loss < self.best_loss:
-            delta = self.best_loss - val_loss
             self.best_loss = val_loss
             self.counter = 0
             self.checkpoint(model, path=self.save_path)
-            if delta < self.min_delta: # case(1): using min_delta
-                self.early_stop = True
-                print(f"Early stopping triggered by delta [(min_delta): {delta:.6f}]")
         else:
             self.counter += 1
             if self.counter >= self.patience: # case(2): using patience

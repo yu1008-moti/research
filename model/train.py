@@ -7,6 +7,7 @@ import argparse
 import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
+import torch.autograd.profiler as profiler
 from datetime import datetime as dt
 
 from model.model import MarketHGTModel
