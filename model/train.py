@@ -93,7 +93,7 @@ if __name__ == "__main__":
     parser.add_argument("--out-hid"   , type=int  , default=128   , help="Output hidden dimension.")
     parser.add_argument("--num-head"  , type=int  , default=4     , help="Number of attention heads.")
     parser.add_argument("--dropout"   , type=float, default=0.1   , help="Dropout rate.")
-    parser.add_argument("--patience"  , type=int  , default=10    , help="Number of epochs to stop training early.")
+    parser.add_argument("--patience"  , type=int  , default=25    , help="Number of epochs to stop training early.")
     parser.add_argument("--epochs"    , type=int  , default=10000 , help="Number of epochs to train.")
     parser.add_argument("--batch-size", type=int  , default=2     , help="Batch size for training.")
     parser.add_argument("--min-delta" , type=float, default=10e-5 , help="Number of epochs to stop training early.")
