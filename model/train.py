@@ -29,21 +29,24 @@ def train(
         epoch_time = dt.now()
 
         # Train loop
-        optimizer.zero_grad()
+        model.train()
         for batch in train_loader:
+            optimizer.zero_grad()
             labels = torch.argmax(batch["stock"].labels.long(), dim=1).to(c.DEVICE)
             output = model(batch)
             loss = criterion(output, labels)
             epock_train_losses.append(float(loss.to('cpu').detach().numpy()))
             loss.backward()
-        optimizer.step()
+            optimizer.step()
 
         # Valid loop
-        for batch in valid_loader:
-            labels = torch.argmax(batch["stock"].labels.long(), dim=1).to(c.DEVICE)
-            output = model(batch)
-            loss = criterion(output, labels)
-            epock_valid_losses.append(float(loss.to('cpu').detach().numpy()))
+        model.eval()
+        with torch.no_grad():
+            for batch in valid_loader:
+                labels = torch.argmax(batch["stock"].labels.long(), dim=1).to(c.DEVICE)
+                output = model(batch)
+                loss = criterion(output, labels)
+                epock_valid_losses.append(float(loss.to('cpu').detach().numpy()))
 
         train_loss = sum(epock_train_losses)/len(epock_train_losses)
         valid_loss = sum(epock_valid_losses)/len(epock_valid_losses)
@@ -72,6 +75,7 @@ def eval(model:MarketHGTModel, dataset: MarketDataset, criterion:CrossEntropyLos
     total_correct = 0
     total_samples = 0
 
+    model.eval()
     with torch.no_grad():
         for tID in range(c.EVAL_RANGE_TID[0], c.EVAL_RANGE_TID[1] + 1):
             data = dataset.get(tID)
@@ -133,7 +137,6 @@ if __name__ == "__main__":
         k=args.k
     )
     
-    model.train()
     train(
         model, optimizer=optimizer, smdl=smdl,
         early_stopping=early_stopping, criterion=criterion, 
@@ -141,5 +144,4 @@ if __name__ == "__main__":
         plotter=plotter
     )
 
-    model.eval()
     eval(model, dataset, criterion=criterion)
