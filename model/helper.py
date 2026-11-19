@@ -46,6 +46,8 @@ class RealTimePlot:
         self.valid_losses = []
         plt.ion()  # Turn on interactive mode
         self.fig, self.ax = plt.subplots()
+        plt.show(block=False)  # ウィンドウを学習開始時点で表示する
+        plt.pause(0.1)
 
 
     def update(self, train_loss: float, valid_loss: float):
@@ -58,8 +60,9 @@ class RealTimePlot:
         self.ax.set_ylabel('Loss')
         self.ax.set_title('Training and Validation Loss')
         self.ax.legend()
-        plt.draw()
-        plt.pause(0.001)  # Pause to allow the plot to update
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        plt.pause(0.1)  # GUIイベントを処理して再描画させる
 
 
     def close(self):
