@@ -22,9 +22,11 @@ def train(
         ) -> None:
     
     start_time = dt.now()
+    train_loader, valid_loader = smdl.get_loader()
+    
 
     for e in range(epoch):
-        train_loader, valid_loader = smdl.get_loader()
+        # train_loader, valid_loader = smdl.get_loader()
         epock_train_losses, epock_valid_losses = [], []
         epoch_time = dt.now()
 

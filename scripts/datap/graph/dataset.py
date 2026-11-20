@@ -2,7 +2,7 @@ import torch
 from torch_geometric.data import HeteroData
 from torch_geometric.data import Dataset
 import numpy as np
-from typing import Dict
+from typing import Dict, Tuple
 import duckdb as sql
 import os
 from datetime import datetime as dt
@@ -128,8 +128,14 @@ class MarketDataset(Dataset):
     def graph_consecutive_check(self) -> bool:
         return h.check_lnIDs_constraint(self.processed_dir)
 
+    def _asinh(self, data: MarketData) -> MarketData:
+        # Convert HeteroData to MarketData
+        for nt in data.node_types:
+            data[nt].x = torch.asinh(data[nt].x)  # Apply the transformation to each node type's features
+        return data
+
     def len(self):
         return len(self.processed_file_names)
 
     def get(self, idx:int) -> MarketData:
-        return torch.load(Path(f'{self.processed_dir}/{self.processed_file_names[idx]}'), weights_only=False)
+        return self._asinh(torch.load(Path(f'{self.processed_dir}/{self.processed_file_names[idx]}'), weights_only=False))

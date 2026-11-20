@@ -121,6 +121,13 @@ O_CODEID_COL_ID = 2
 O_NODEID_COL_ID = 3
 O_MAINDATA_START_ID = 4
 
+ND = {
+    "stock"    : {"O": 0, "H": 1, "L": 2, "C": 3, "V": 4},
+    "statement": {"Sales": 0, "OP": 1, "OdP": 2, "NP": 3, "EPS": 4, "TA": 5, "Eq": 6, "EqAR": 7, "BPS": 8, "CFO": 9, "CFI": 10, "CFF": 11, "CashEq": 12, "DivnQ": 13, "ActualShOutFY": 14},
+    "mktidx"   : {"O": 0, "H": 1, "L": 2, "C": 3},
+    "future"   : {"O": 0, "H": 1, "L": 2, "C": 3, "V": 4, "OI": 5},
+}
+
 # window size difinition
 GRU_WINDOW_SIZE = 25
 NUM_OCCUR_WINDOW_SIZE = 12

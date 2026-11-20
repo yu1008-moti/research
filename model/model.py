@@ -16,11 +16,12 @@ def get_data_attr(data:HeteroData):
     x          = [data[node_type].x for node_type in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
     target     = data['stock'].target.to(c.DEVICE)
     ntIDs      = torch.cat([data[node_type].ntID       for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
-    seq_len    = torch.cat([data[node_type].seq_len    for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
+    ntIDs_cpu  = ntIDs.to('cpu')
+    seq_len    = torch.cat([data[node_type].seq_len    for node_type in c.HETERO_NODE_TYPES], dim=0).to('cpu')
     edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
     etIDs      = torch.cat([data[edge_type].etID       for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
 
-    return x, seq_len, edge_index, ntIDs, etIDs, target
+    return x, seq_len, edge_index, ntIDs, ntIDs_cpu, etIDs, target
 
 
 class Classifier(nn.Module):
@@ -53,14 +54,14 @@ class myGRU(nn.Module):
             for in_dim in self.node_type_input_num.values()
         ])
 
-    def forward(self, x:List[torch.Tensor], seq_len:List[torch.Tensor], ntIDs: torch.Tensor) -> torch.Tensor:
+    def forward(self, x:List[torch.Tensor], seq_len:List[torch.Tensor], ntIDs_cpu: torch.Tensor) -> torch.Tensor:
 
         emb = torch.zeros(len(x[0])+len(x[1])+len(x[2])+len(x[3]), self.hidden_size, device=DEVICE)
 
         for ntID in c.HETERO_NODE_ID.values():
             # empty = seq_len[node_type] == 0
-            idx = ntIDs == ntID
-            lens = seq_len[idx].clamp(min=1, max=25).to('cpu')  # Ensure lengths are at least 1 and at most 25
+            idx = ntIDs_cpu == ntID
+            lens = seq_len[idx].clamp(min=1, max=25) #.to('cpu')  # Ensure lengths are at least 1 and at most 25
             x_nt = x[ntID].to(DEVICE)
             packed = pack_padded_sequence(x_nt, lens, batch_first=True, enforce_sorted=False)
             assert packed.sorted_indices is not None, "Packed sequence does not have sorted indices"
@@ -83,13 +84,17 @@ class MarketHGTModel(nn.Module):
         self.gru = myGRU(out_hid, bidirectional)
         self.hgt_conv = conv.GNNModel(in_hid, out_hid, num_head, num_layers, dropout)
         self.classifier = Classifier(out_hid)
+        self.transform = torch.asinh
 
     def forward(self, data:HeteroData):
         # Get the data attributes
-        x, seq_len, edge_index, ntIDs, etIDs, target = get_data_attr(data)
+        x, seq_len, edge_index, ntIDs, ntIDs_cpu, etIDs, target = get_data_attr(data)
+
+        for i in range(len(x)):
+            x[i] = self.transform(x[i])  # Apply the transformation to each node type's features
 
         # Pass through GRU
-        h = self.gru(x, seq_len, ntIDs)  # Assuming node_type_i represents the node types for GRU
+        h = self.gru(x, seq_len, ntIDs_cpu)  # Assuming node_type_i represents the node types for GRU
         # Pass through HGTConv
         h = self.hgt_conv(h, edge_index, ntIDs, etIDs)
 

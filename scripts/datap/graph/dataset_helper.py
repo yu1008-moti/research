@@ -84,6 +84,7 @@ def get_labels(conn: connect) -> pd.DataFrame:
     returns = conn.execute("SELECT * from dev.mytmp.label;").df()
     return returns
 
+
 def check_lnIDs_constraint(processed_dir: str) -> bool:
     start_time = dt.now()
     print(f"{CYAN}Checking graph data for consecutive lnIDs for tIDs in range [{c.USE_MIN_TID}, {c.USE_MAX_TID}]{END}")

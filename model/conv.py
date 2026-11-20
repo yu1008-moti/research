@@ -57,7 +57,7 @@ class MarketHGTConv(MessagePassing):
         for i, j, r in c.HETERO_EDGE_UNIT_ID:
             edge_idx = (ntIDs_i == i) & (ntIDs_j == j) & (etIDs == r)
 
-            if sum(edge_idx) == 0: continue
+            if torch.sum(edge_idx) == 0: continue
 
             target_x_i = x_i[edge_idx]
             source_x_j = x_j[edge_idx]
