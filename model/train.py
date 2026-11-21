@@ -7,13 +7,13 @@ import argparse
 import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
-import torch.autograd.profiler as profiler
+import duckdb as db
 from datetime import datetime as dt
 
 from model.model import MarketHGTModel
 import scripts.datap.graph.const as c
 from scripts.datap.graph.dataset import MarketDataset
-from model.helper import EarlyStopping, RealTimePlot, SampledMarketDataLoader
+from model.helper import EarlyStopping, RealTimePlot, SampledMarketDataLoader, Evaluation
 
 def train(
         model:MarketHGTModel, optimizer:Adam, smdl:SampledMarketDataLoader,
@@ -72,24 +72,37 @@ def train(
     print(f"Training completed in: {dt.now() - start_time}")
     return
 
-def eval(model:MarketHGTModel, dataset: MarketDataset, criterion:CrossEntropyLoss):
+def eval(model:MarketHGTModel, dataset: MarketDataset, criterion:CrossEntropyLoss, eval_split: tuple):
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
 
+    conn = db.connect(database=":memory:", read_only=False)
+    conn.execute(f"attach '{c.ACT_DB_PATH}' as act;")
+    conn.execute(f"attach '{c.DEV_DB_PATH}' as dev;")
+    df = conn.execute("SELECT * from dev.tool.risk_free;").df()[['tID', 'r_f']]
+    conn.close()
+
+    r_p = []
+    r_f = db.connect(database=":memory:", read_only=False)
+
     model.eval()
     with torch.no_grad():
-        for tID in range():
+        for tID in range(eval_split[0], eval_split[1]):
             data = dataset.get(tID)
-            labels = torch.argmax(data["stock"].labels.long(), dim=1).to(c.DEVICE)
+            labels  = torch.argmax(data["stock"].labels.long(), dim=1).to(c.DEVICE)
+            returns = data["stock"].returns.to(c.DEVICE)
+            
             output = model(data)
+
+            r_p.append((returns, output))
 
             loss = criterion(output, labels)
             total_loss += float(loss.to('cpu').detach().numpy())
             total_correct += (output.argmax(dim=1) == labels).sum().item()
             total_samples += labels.size(0)
 
-    avg_loss = total_loss / (c.EVAL_RANGE_TID[1] - c.EVAL_RANGE_TID[0] + 1)
+    avg_loss = total_loss / (eval_split[1] - eval_split[0] + 1)
     accuracy = total_correct / total_samples if total_samples > 0 else 0.0
 
     print(f'Evaluation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}')
@@ -107,11 +120,31 @@ if __name__ == "__main__":
     parser.add_argument("--num-layer" , type=int  , default=2     , help="Number of GNN layers.")
     parser.add_argument("--lr"        , type=float, default=0.001 , help="Learning rate.")
     parser.add_argument('--k'         , type=int  , default=20    , help="Number of random samples to draw for each epoch.")
-    parser.add_argument("--train_id"  , type=int  , default=0     , help="Training ID for splitted training range.")
+    parser.add_argument("--train-id"  , type=int  , default=0     , help="Training ID for splitted training range.")
+    parser.add_argument('--model-id'  , type=str  , default=0     , help="Model ID for the current training.")
 
+    parser.add_argument('--top-k'     , type=int  , default=20    , help="Number of stocks for long/short portfolio in evaluation.")
+
+    parser.add_argument('--eval'         , action='store_true', help="Run evaluation only (requires --model_id).")
     parser.add_argument('--bidirectional', action='store_true', help="Use bidirectional GRU.")
 
     args = parser.parse_args()
+
+    if args.eval:
+        eval_split = c.EVAL_SPLIT
+        dataset = MarketDataset(root="pt")
+        model = MarketHGTModel(
+            in_hid=args.in_hid, out_hid=args.out_hid, num_head=args.num_head,
+            num_layers=args.num_layer, dropout=args.dropout,
+            bidirectional=args.bidirectional,
+        ).to(c.DEVICE)
+        model.load_state_dict(torch.load(f"best_model_{args.model_id}.pt", map_location=c.DEVICE))
+        criterion = CrossEntropyLoss()
+        evaluation = Evaluation(model, dataset, criterion=criterion, eval_split=eval_split, top_k=args.top_k)
+        evaluation.evaluate()
+        print(f"Saved daily results: {evaluation.save()}")
+        exit(0)
+
 
     model = MarketHGTModel(
         in_hid        = args.in_hid, 
@@ -138,6 +171,8 @@ if __name__ == "__main__":
         valid_ds_range=c.VALID_SPLIT[args.train_id],
         k=args.k
     )
+
+    eval_split = c.EVAL_SPLIT
     
     train(
         model, optimizer=optimizer, smdl=smdl,
@@ -145,5 +180,3 @@ if __name__ == "__main__":
         epoch=args.epochs, batch_size=args.batch_size,
         plotter=plotter
     )
-
-    eval(model, dataset, criterion=criterion)

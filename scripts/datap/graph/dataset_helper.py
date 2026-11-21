@@ -67,8 +67,9 @@ def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: NodeDat
         if ntNm == "stock":
             returns_tID = returns[returns['tID'] == tID].sort_values(by='lnID')
             isTarget = x['lnID'].isin(returns_tID['lnID']).astype(np.int8)
-            data[ntNm].target = torch.tensor(isTarget.to_numpy(), dtype=torch.int8)
-            data[ntNm].labels = torch.tensor(returns_tID[['neg', 'neu', 'pos']].to_numpy(), dtype=torch.int8)
+            data[ntNm].target  = torch.tensor(isTarget.to_numpy(), dtype=torch.int8)
+            data[ntNm].labels  = torch.tensor(returns_tID[['neg', 'neu', 'pos']].to_numpy(), dtype=torch.int8)
+            data[ntNm].returns = torch.tensor(returns_tID[['NxRi']].to_numpy(), dtype=torch.float32)
 
         data[ntNm].x       = pad_sequence(X, batch_first=True, padding_value=0.0)
         data[ntNm].seq_len = torch.tensor(seq_len_list, dtype=torch.int32)

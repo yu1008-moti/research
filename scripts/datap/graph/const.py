@@ -171,9 +171,7 @@ VALID_SPLIT = [
     (int(_TID_SPLIT[id][1]*0.8), _TID_SPLIT[id][1]) for id in range(len(_TID_SPLIT))
 ]
 
-TEST_SPLIT = [
-    (3588 - _BASE, 4078 - _BASE), # 2023-01-04, 2024-12-30
-]
+EVAL_SPLIT:Tuple[int, int] = (3588 - _BASE, 4078 - _BASE) # 2023-01-04, 2024-12-30
 
 
 
