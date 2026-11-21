@@ -42,6 +42,7 @@ class myGRU(nn.Module):
         
         self.linear_layers = nn.ModuleList([
             nn.Linear(hidden_size*2, hidden_size)
+            for _ in range(len(self.node_type_input_num))  # Create a linear layer for each node type
         ])
 
         self.GRUs = nn.ModuleList([

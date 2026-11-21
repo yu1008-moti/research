@@ -121,7 +121,7 @@ class SampledMarketDataLoader:
                     mean, std = scaler[nt][i, ft]['mean'], scaler[nt][i, ft]['std']
                     d[nt].x[:, :, i] = (d[nt].x[:, :, i] - mean) / std
         
-        print(f"{GREEN}[{'train' if scaler is not None else 'valid'}]Data transformation completed: asinh and z-score normalization applied{END}")
+        print(f"{GREEN}[{'train' if res is not None else 'valid'}]Data transformation completed: asinh and z-score normalization applied{END}")
         return res
 
     def get_loader(self) -> Tuple[DataLoader, DataLoader]:

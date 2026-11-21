@@ -79,7 +79,7 @@ def eval(model:MarketHGTModel, dataset: MarketDataset, criterion:CrossEntropyLos
 
     model.eval()
     with torch.no_grad():
-        for tID in range(c.EVAL_RANGE_TID[0], c.EVAL_RANGE_TID[1] + 1):
+        for tID in range():
             data = dataset.get(tID)
             labels = torch.argmax(data["stock"].labels.long(), dim=1).to(c.DEVICE)
             output = model(data)
