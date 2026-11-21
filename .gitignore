@@ -31,3 +31,6 @@ logs/tensorboard/*
 # Ignore per-run training-curve images saved next to model checkpoints
 # (repo-wide *.png isn't ignored since images/ etc. intentionally commit some PNGs)
 model/*/models/*.png
+
+# model outputs
+save_models/

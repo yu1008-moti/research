@@ -1,4 +1,5 @@
 import os
+import json
 import random
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
@@ -13,7 +14,7 @@ from datetime import datetime as dt
 from model.model import MarketHGTModel
 import scripts.datap.graph.const as c
 from scripts.datap.graph.dataset import MarketDataset
-from model.helper import EarlyStopping, RealTimePlot, SampledMarketDataLoader, Evaluation
+from model.helper import EarlyStopping, RealTimePlot, SampledMarketDataLoader, Evaluation, get_model_dir
 
 def train(
         model:MarketHGTModel, optimizer:Adam, smdl:SampledMarketDataLoader,
@@ -121,7 +122,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr"        , type=float, default=0.001 , help="Learning rate.")
     parser.add_argument('--k'         , type=int  , default=20    , help="Number of random samples to draw for each epoch.")
     parser.add_argument("--train-id"  , type=int  , default=0     , help="Training ID for splitted training range.")
-    parser.add_argument('--model-id'  , type=str  , default=0     , help="Model ID for the current training.")
+    parser.add_argument('--model-id'  , type=str  , default=None  , help="Model ID; outputs go to save_models/<model_id>/ (default: timestamp).")
 
     parser.add_argument('--top-k'     , type=int  , default=20    , help="Number of stocks for long/short portfolio in evaluation.")
 
@@ -129,6 +130,13 @@ if __name__ == "__main__":
     parser.add_argument('--bidirectional', action='store_true', help="Use bidirectional GRU.")
 
     args = parser.parse_args()
+
+    if args.model_id is None:
+        if args.eval:
+            parser.error("--eval requires --model-id.")
+        args.model_id = dt.now().strftime('%Y%m%d_%H%M%S')
+    model_dir = get_model_dir(args.model_id)
+    print(f"model_dir: {model_dir}")
 
     if args.eval:
         eval_split = c.EVAL_SPLIT
@@ -138,9 +146,10 @@ if __name__ == "__main__":
             num_layers=args.num_layer, dropout=args.dropout,
             bidirectional=args.bidirectional,
         ).to(c.DEVICE)
-        model.load_state_dict(torch.load(f"best_model_{args.model_id}.pt", map_location=c.DEVICE))
+        model.load_state_dict(torch.load(os.path.join(model_dir, "best_model.pt"), map_location=c.DEVICE))
         criterion = CrossEntropyLoss()
-        evaluation = Evaluation(model, dataset, criterion=criterion, eval_split=eval_split, top_k=args.top_k)
+        evaluation = Evaluation(model, dataset, criterion=criterion, eval_split=eval_split,
+                                model_dir=model_dir, top_k=args.top_k)
         evaluation.evaluate()
         print(f"Saved daily results: {evaluation.save()}")
         exit(0)
@@ -162,8 +171,10 @@ if __name__ == "__main__":
 
     optimizer = Adam(model.parameters(), lr=args.lr)
     criterion = CrossEntropyLoss()
-    early_stopping = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
-    plotter = RealTimePlot()
+    early_stopping = EarlyStopping(model_dir=model_dir, patience=args.patience, min_delta=args.min_delta)
+    plotter = RealTimePlot(model_dir=model_dir)
+    with open(os.path.join(model_dir, "params.json"), "w", encoding="utf-8") as f:
+        json.dump(vars(args), f, indent=2, ensure_ascii=False)
     smdl = SampledMarketDataLoader(
         dataset, 
         batch_size=args.batch_size,

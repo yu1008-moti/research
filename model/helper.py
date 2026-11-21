@@ -1,3 +1,4 @@
+import os
 import torch
 from typing import Tuple, List, Optional
 import matplotlib.pyplot as plt 
@@ -19,15 +20,25 @@ END = '\033[0m'
 
 MyScaler = dict[str, dict[Tuple[int, str], dict[str, float]]]
 
+SAVE_MODELS_DIR = "save_models"
+
+
+def get_model_dir(model_id: str) -> str:
+    """save_models/<model_id>/ を作成して返す. モデルに関する全出力の保存先."""
+    path = os.path.join(SAVE_MODELS_DIR, str(model_id))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 class EarlyStopping:
 
-    def __init__(self, patience: int = 10, min_delta: float = 0.0):
+    def __init__(self, model_dir: str, patience: int = 10, min_delta: float = 0.0):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
         self.best_loss = float('inf')
         self.early_stop = False
-        self.save_path = f"best_model_{dt.now().strftime('%Y%m%d_%H%M%S')}.pt"
+        self.save_path = os.path.join(model_dir, "best_model.pt")
 
 
     def __call__(self, val_loss: float, model: torch.nn.Module):
@@ -50,7 +61,8 @@ class EarlyStopping:
 
 class RealTimePlot:
 
-    def __init__(self):
+    def __init__(self, model_dir: str):
+        self.model_dir = model_dir
         self.train_losses = []
         self.valid_losses = []
         plt.ion()  # Turn on interactive mode
@@ -75,7 +87,7 @@ class RealTimePlot:
 
 
     def close(self):
-        plt.savefig(f"loss_plot_{dt.now().strftime('%Y%m%d_%H%M%S')}.png")
+        plt.savefig(os.path.join(self.model_dir, "loss_plot.png"))
         plt.ioff()  # Turn off interactive mode
         plt.show()
 
@@ -149,9 +161,10 @@ class Evaluation:
     CLASS_NEG = 0
 
     def __init__(self, model: torch.nn.Module, dataset: MarketDataset, criterion: torch.nn.Module,
-                 eval_split: Tuple[int, int], top_k: int = 20):
+                 eval_split: Tuple[int, int], model_dir: str, top_k: int = 20):
         if isinstance(eval_split[0], (tuple, list)):
             eval_split = eval_split
+        self.model_dir = model_dir
         self.model = model
         self.dataset = dataset
         self.criterion = criterion
@@ -235,6 +248,6 @@ class Evaluation:
     def save(self, path: Optional[str] = None) -> str:
         """日次結果を CSV に保存する."""
         assert self.daily is not None, "Call evaluate() first."
-        path = path or f"eval_daily_{dt.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        path = path or os.path.join(self.model_dir, "eval_daily.csv")
         self.daily.to_csv(path, index=False)
         return path
