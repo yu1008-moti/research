@@ -8,8 +8,6 @@ from typing import List
 
 import scripts.datap.graph.const as c
 
-NODE_TYPES:List[str] = ['stocks', 'statements', 'mktIdx', 'future']
-EDGE_TYPES:List[str] = ['corr', 'made_up_Mkt', 'made_up_topix', 'made_up_s33', 'made_up_s17', 'recent_report', 'index_future']
 
 class MarketHGTConv(MessagePassing):
     def __init__(self, in_hid:int, out_hid:int, num_head:int, dropout:float):
@@ -21,18 +19,18 @@ class MarketHGTConv(MessagePassing):
         self.d_k = out_hid // num_head
         self.dropout = dropout
 
-        self.q_linears = ModuleList([Linear(in_hid, out_hid) for _ in range(num_head)])
-        self.k_linears = ModuleList([Linear(in_hid, out_hid) for _ in range(num_head)])
-        self.v_linears = ModuleList([Linear(in_hid, out_hid) for _ in range(num_head)])
+        self.q_linears = ModuleList([Linear(in_hid, out_hid)  for _ in range(num_head)])
+        self.k_linears = ModuleList([Linear(in_hid, out_hid)  for _ in range(num_head)])
+        self.v_linears = ModuleList([Linear(in_hid, out_hid)  for _ in range(num_head)])
         self.a_linears = ModuleList([Linear(out_hid, out_hid) for _ in range(num_head)])
 
-        self.W_att = Parameter(torch.Tensor(len(EDGE_TYPES), num_head, self.d_k, self.d_k))
-        self.W_msg = Parameter(torch.Tensor(len(EDGE_TYPES), num_head, self.d_k, self.d_k))
+        self.W_att = Parameter(torch.Tensor(len(c.HETERO_EDGE_TYPES), num_head, self.d_k, self.d_k))
+        self.W_msg = Parameter(torch.Tensor(len(c.HETERO_EDGE_TYPES), num_head, self.d_k, self.d_k))
 
-        self.rel_pri = Parameter(torch.ones(len(EDGE_TYPES), num_head))
+        self.rel_pri = Parameter(torch.ones(len(c.HETERO_EDGE_TYPES), num_head))
 
         self.drop = Dropout(self.dropout)
-        self.skip = Parameter(torch.ones(len(NODE_TYPES)))
+        self.skip = Parameter(torch.ones(len(c.HETERO_NODE_TYPES)))
 
         glorot(self.W_att)
         glorot(self.W_msg)
@@ -44,8 +42,8 @@ class MarketHGTConv(MessagePassing):
 
     def message(self, edge_index_i: torch.Tensor, x_i: torch.Tensor, x_j: torch.Tensor, ntIDs_i: torch.Tensor, ntIDs_j: torch.Tensor, etIDs: torch.Tensor):
         # x_j has shape [E, in_hid]
-        # i : center node
-        # j : neighbor node
+        # i : target node
+        # j : source node
 
         device = x_i.device
 
@@ -87,9 +85,7 @@ class MarketHGTConv(MessagePassing):
         for i in c.HETERO_NODE_ID.values():
             target_idx = (ntIDs == i)
             trans_out = self.drop(self.a_linears[i](aggr_out[target_idx]))
-
             alpha = F.sigmoid(self.skip[i])
-
             aggr_res[target_idx] = alpha * trans_out + (1 - alpha) * x[target_idx]
 
         return aggr_res

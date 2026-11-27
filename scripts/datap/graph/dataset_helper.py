@@ -44,14 +44,47 @@ def set_edges(conn: connect, tID: int, data: HeteroData, pre_process_results: Di
             edge_index = torch.tensor(pre_process_results['edge_index'][:, mask], dtype=torch.long)
             etIDs      = torch.tensor(pre_process_results['etID'][mask], dtype=torch.int16)
         else:
-            edges_df = conn.execute(c.SET_EDGES_QUERY.substitute(src_ntNm=src_ntNm, tgt_ntNm=tgt_ntNm, etNm=etNm, tID=tID)).df()
+            _etNm = etNm.replace("reverse_", "")
+            edges_df = conn.execute(c.SET_EDGES_QUERY.substitute(src_ntNm=src_ntNm, tgt_ntNm=tgt_ntNm, etNm=_etNm, tID=tID)).df()
             edge_index = torch.tensor(edges_df[[f"{src_ntNm}_lnID", f"{tgt_ntNm}_lnID"]].values.T, dtype=torch.long)
             etIDs = torch.tensor(np.full((edges_df.shape[0],), c.HETERO_EDGE_ID[etNm], dtype=c.NP_INT32))
         data[src_ntNm, etNm, tgt_ntNm].edge_index = edge_index
         data[src_ntNm, etNm, tgt_ntNm].etID = etIDs
+    
+def remove_outliers(returns_tID: pd.DataFrame) -> pd.DataFrame:
+    rm_ratio = c.OUTLIER_REMOVE_RATIO
+    returns_tID = returns_tID.sort_values(by='NxRi')
+    returns_tID = returns_tID.iloc[int(len(returns_tID) * rm_ratio): int(len(returns_tID) * (1 - rm_ratio))]
+    return returns_tID.sort_values(by='lnID')
 
 
-def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: NodeDataMaster, returns: pd.DataFrame) -> None:
+def annotation(returns_tID: pd.DataFrame, is_train: bool, ds_root: str) -> pd.DataFrame:
+    returns_tID = returns_tID.copy()
+    use, comp = ds_root.split('_')
+    
+    if is_train:
+        returns_tID['neg'] = (returns_tID[use] <  0).astype(np.int8) if comp == 'zero' else (returns_tID[use] <  returns_tID[comp]).astype(np.int8)
+    else:
+        returns_tID['neg'] = (returns_tID[use] <= 0).astype(np.int8) if comp == 'zero' else (returns_tID[use] <= returns_tID[comp]).astype(np.int8)
+    returns_tID['pos'] = (returns_tID[use] >  0).astype(np.int8) if comp == 'zero' else (returns_tID[use] >  returns_tID[comp]).astype(np.int8)
+    
+    # assert (returns_tID['neg'] + returns_tID['pos'] == 1).all(), f"Labeling error: Some rows in returns_tID have neither 'neg' nor 'pos' label set to 1."
+    return returns_tID
+
+
+def balance_classes(returns_tID: pd.DataFrame) -> pd.DataFrame:
+    """多数派クラスをランダムにアンダーサンプリングし, 各クラスの件数を最少クラスに揃える (lnID 順を維持)."""
+    labels = c.CLASS_LABELS
+    min_num_class = int(returns_tID[labels].sum(axis=0).min())
+    keep = [
+        returns_tID[returns_tID[lb] == 1].sample(n=min_num_class, replace=False).index
+        for lb in labels
+    ]
+    return returns_tID.loc[returns_tID.index.isin(np.concatenate(keep))].sort_values(by='lnID')
+
+
+
+def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: NodeDataMaster, returns: pd.DataFrame, ds_root: str) -> None:
     seq_df = conn.execute(c.SET_NODES_QUERY.substitute(tID=tID)).df().set_index(['gnID'], drop=True)
     for (ntNm, ntID), nodeData in zip(c.HETERO_NODE_ID.items(), nodeDataMaster.node_data_master):
         x = nodeData[nodeData['tID'] == tID].sort_values(by='lnID')
@@ -61,14 +94,23 @@ def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: NodeDat
         for seq, seq_len in seq_df[seq_df['ntID'] == ntID].loc[x['gnID'], ['seq', 'seq_len']].to_numpy():
             assert isinstance(seq, np.ndarray), f"Expected seq to be a numpy array, but got {type(seq)}"
             x_seq_data = nodeData_gnID.loc[seq, :].iloc[:, c.NODE_FEATS_HEAD_IDX:].to_numpy()
+            x_seq_data = np.nan_to_num(x_seq_data, nan=0.0)  # Replace NaN with 0.0
             X.append(torch.tensor(x_seq_data, dtype=torch.float32))
             seq_len_list.append(seq_len)
 
         if ntNm == "stock":
+            # TRAIN_SPLIT は index 空間 (tID - _BASE), 上限は exclusive (= VALID_SPLIT の開始)
+            is_train = c.TRAIN_SPLIT[0][0] <= tID - c._BASE < c.TRAIN_SPLIT[0][1] # if you want to change condition, you can change it ./const.py
             returns_tID = returns[returns['tID'] == tID].sort_values(by='lnID')
+            if is_train:
+                returns_tID = remove_outliers(returns_tID)  # 未来情報 (NxRi) を使うので学習期間のみ
+            returns_tID = annotation(returns_tID, is_train, ds_root)  # ラベル付与
+            if is_train:
+                returns_tID = balance_classes(returns_tID)
             isTarget = x['lnID'].isin(returns_tID['lnID']).astype(np.int8)
+            assert int(isTarget.sum()) == len(returns_tID), f"Mismatch between target and labels for tID {tID} in stock node type."
             data[ntNm].target  = torch.tensor(isTarget.to_numpy(), dtype=torch.int8)
-            data[ntNm].labels  = torch.tensor(returns_tID[['neg', 'neu', 'pos']].to_numpy(), dtype=torch.int8)
+            data[ntNm].labels  = torch.tensor(returns_tID[c.CLASS_LABELS].to_numpy(), dtype=torch.int8)
             data[ntNm].returns = torch.tensor(returns_tID[['NxRi']].to_numpy(), dtype=torch.float32)
 
         data[ntNm].x       = pad_sequence(X, batch_first=True, padding_value=0.0)
@@ -81,8 +123,9 @@ def set_nodes(conn: connect, tID: int, data: HeteroData, nodeDataMaster: NodeDat
 
 
 def get_labels(conn: connect) -> pd.DataFrame:
-    # returns = conn.execute("SELECT * from label.nxri;").df()
-    returns = conn.execute("SELECT * from dev.mytmp.label;").df()
+    returns = conn.execute("SELECT * from label.nxri;").df()
+    returns = returns.dropna()
+    returns = returns.sort_values(by=['tID', 'lnID']).reset_index(drop=True)
     return returns
 
 

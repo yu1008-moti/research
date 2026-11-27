@@ -120,7 +120,7 @@ class MarketDataset(Dataset):
             if not (tID < c.USE_MIN_TID or tID > c.USE_MAX_TID): 
                 data = MarketData()
                 h.set_edges(self.conn, tID, data, pre_process_results)
-                h.set_nodes(self.conn, tID, data, node_data_master, returns)
+                h.set_nodes(self.conn, tID, data, node_data_master, returns, ds_root=self.root)
                 torch.save(data, os.path.join(self.processed_dir, f'data_{tID}.pt'))
             print(f'\r[{i:4d}/{len(tIDs)}] Processed tID: {tID}', end=' ')
         print("\n[created Graph Objects over all tIDs]")

@@ -64,6 +64,7 @@ dependencies = [
     "python-dateutil==2.9.0.post0",
     "pyzmq==27.1.0",
     "requests==2.33.1",
+    "schedulefree>=1.4.1",
     "scipy==1.17.1",
     "seaborn==0.13.2",
     "setuptools==83.0.0",

@@ -45,5 +45,18 @@
                 "--num-layer" , "2", 
                 "--lr"        , "0.001", ]
         },
+        {
+            "name": "test eval",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "model.train",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "args": [ 
+                "--eval",
+                "--model-id", "20261122_091148"
+            ]
+        },
     ]
 }

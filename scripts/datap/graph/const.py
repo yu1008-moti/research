@@ -6,14 +6,7 @@ from string import Template
 
 DB_VERSION = "r8_Nov4v"
 
-NUM_LABELS = 3  # Assuming 3 classes for classification
-
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# MAX_TID = 4392 # include this dateID
-
-# USE_MIN_TFID = 1634 # means 2015-01-05
-# USE_MAX_TFID = 4321 # means 2025-12-30
 
 PARQUET_DISR = Path("db/parquet")
 
@@ -23,12 +16,17 @@ CORR_EDGE_INFO_PATH = Path("scripts/datap/graph/processed/corr_edge_info.npz")
 
 HETERO_EDGE_UNIT: Dict[str, Tuple[str, str]] = {
     # r: (src_ntNm, tgt_ntNm)
-    "corr"           : ("stock"     , "stock"),
-    "recent_report"  : ("statement" , "stock"),
-    "made_up_mkt"    : ("mktidx"    , "stock"),
-    "made_up_topix"  : ("mktidx"    , "stock"),
-    "made_up_s17"    : ("mktidx"    , "stock"),
-    "mktidx_future"  : ("future"    , "mktidx")
+    "corr"                   : ("stock"     , "stock"),
+    "recent_report"          : ("statement" , "stock"),
+    "made_up_mkt"            : ("mktidx"    , "stock"),
+    "made_up_topix"          : ("mktidx"    , "stock"),
+    "made_up_s17"            : ("mktidx"    , "stock"),
+    "mktidx_future"          : ("future"    , "mktidx"),
+    "reverse_recent_report"  : ("stock"     , "statement"),
+    "reverse_made_up_mkt"    : ("stock"     , "mktidx"),
+    "reverse_made_up_topix"  : ("stock"     , "mktidx"),
+    "reverse_made_up_s17"    : ("stock"     , "mktidx"),
+    "reverse_mktidx_future"  : ("mktidx"    , "future")
 }
 
 HETERO_NODE_TYPES: List[str] = [
@@ -45,17 +43,27 @@ HETERO_EDGE_TYPES: List[str] = [
     'made_up_mkt',
     'made_up_topix',
     'made_up_s17',
-    'mktidx_future'
+    'mktidx_future',
+    'reverse_recent_report',
+    'reverse_made_up_mkt',
+    'reverse_made_up_topix',
+    'reverse_made_up_s17',
+    'reverse_mktidx_future'
 ]
 
 HETERO_EDGE_UNIT_ID: List[Tuple[int, int, int]] = [
-    # (i, j, r) = (source_node_type_id, target_node_type_id, edge_type_id)
-    (0, 0, 0),  # corr: stock -> stock
-    (1, 0, 1),  # recent_report: statement -> stock
-    (2, 0, 2),  # made_up_mkt: mktidx -> stock
-    (2, 0, 3),  # made_up_topix: mktidx -> stock
-    (2, 0, 4),  # made_up_s17: mktidx -> stock
-    (3, 2, 5)   # mktidx_future: mktidx -> future
+    # (i, j, r) = (target_node_type_id, source_node_type_id, edge_type_id)
+    (0, 0,  0),  # corr                  : stock     -> stock
+    (0, 1,  1),  # recent_report         : statement -> stock
+    (0, 2,  2),  # made_up_mkt           : mktidx    -> stock
+    (0, 2,  3),  # made_up_topix         : mktidx    -> stock
+    (0, 2,  4),  # made_up_s17           : mktidx    -> stock
+    (2, 3,  5),  # mktidx_future         : future    -> mktidx
+    (1, 0,  6),  # reverse recent_report : stock     -> statement
+    (2, 0,  7),  # reverse made_up_mkt   : stock     -> mktidx   
+    (2, 0,  8),  # reverse made_up_topix : stock     -> mktidx   
+    (2, 0,  9),  # reverse made_up_s17   : stock     -> mktidx   
+    (3, 2, 10)   # reverse mktidx_future : future    -> mktidx   
 ]
 
 HETERO_NODE_ID: Dict[str, int] = {
@@ -66,22 +74,27 @@ HETERO_NODE_ID: Dict[str, int] = {
 }
 
 HETERO_EDGE_ID: Dict[str, int] = {
-    'corr'           : 0,
-    'recent_report'  : 1,
-    'made_up_mkt'    : 2,
-    'made_up_topix'  : 3,
-    'made_up_s17'    : 4,
-    'mktidx_future'  : 5
+    'corr'                   : 0,
+    'recent_report'          : 1,
+    'made_up_mkt'            : 2,
+    'made_up_topix'          : 3,
+    'made_up_s17'            : 4,
+    'mktidx_future'          : 5,
+    'reverse_recent_report'  : 6, # reverse series: +5
+    'reverse_made_up_mkt'    : 7, # reverse series: +5
+    'reverse_made_up_topix'  : 8, # reverse series: +5
+    'reverse_made_up_s17'    : 9, # reverse series: +5
+    'reverse_mktidx_future'  : 10 # reverse series: +5
 }
 
 
 # select count(*)-4 as num_cols from (describe '.\*\*.parquet');
 # "4" means "tfID", "codeID", "dateID", "nodeID" columns
 NODE_TYPE_INPUT_NUM: Dict[str, int] = {
-    "stock"        : 5,
+    "stock"        :  5,
     "statement"    : 19,
-    "mktidx"       : 4,
-    "future"       : 6
+    "mktidx"       :  4,
+    "future"       :  6
 }
 
 # 0: tID, 1: elpDs, 2: gnID, 3: lnID, 4: cID, 5:ntID, 6~ : feats
@@ -146,10 +159,6 @@ TRAIN_RANGE_TID = (1634, 3587) # (2015-01-05, 2022-12-30)
 VALID_RANGE_TID = (3588, 3833) # (2023-01-04, 2023-12-29)
 EVAL_RANGE_TID  = (3834, 4321) # (2024-01-04, 2025-12-30)
 
-# TRAIN_RANGE_TID = (2856, 2934) # (2020-01-06, 2020-04-30)
-# VALID_RANGE_TID = (2953, 2974) # (2020-06-01, 2020-06-30)
-# EVAL_RANGE_TID  = (2975, 2995) # (2020-07-01, 2020-07-31)
-
 _BASE = 1634
 
 # First Try -> Occur to over-training
@@ -179,11 +188,10 @@ VALID_SPLIT = [
 
 EVAL_SPLIT:Tuple[int, int] = (3588 - _BASE, 4078 - _BASE) # 2023-01-04, 2024-12-30
 
+OUTLIER_REMOVE_RATIO = 0.01 # 10% of the data will be considered as outliers
 
-
-# TRAIN_RANGE = (0             , 0              + (TRAIN_RANGE_TID[1] - TRAIN_RANGE_TID[0] + 1))
-# VALID_RANGE = (TRAIN_RANGE[1], TRAIN_RANGE[1] + (VALID_RANGE_TID[1] - VALID_RANGE_TID[0] + 1))
-# EVAL_RANGE  = (VALID_RANGE[1], VALID_RANGE[1] + (EVAL_RANGE_TID[1]  - EVAL_RANGE_TID[0]  + 1))
+# CLASS_LABELS = ['neg', 'neu', 'pos']  # 3-class classification labels
+CLASS_LABELS = ['neg', 'pos']  # 2-class classification labels
 
 USE_MIN_TID = TRAIN_RANGE_TID[0]
 USE_MAX_TID = EVAL_RANGE_TID[1]

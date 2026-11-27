@@ -9,29 +9,38 @@ import torch
 from typing import Dict, List, Tuple
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-NUM_LABELS = c.NUM_LABELS  # Assuming 3 classes for classification
 DEVICE = c.DEVICE
 
 def get_data_attr(data:HeteroData):
+    nts = c.HETERO_NODE_TYPES
+    batch = torch.cat([
+        data[nt].batch if 'batch' in data[nt] else torch.zeros(data[nt].num_nodes, dtype=torch.long)
+        for nt in nts
+    ])                                                     # 型順
+    ntIDs   = torch.cat([data[nt].ntID    for nt in nts])  # 型順
+    seq_len = torch.cat([data[nt].seq_len for nt in nts])  # 型順
+
+    order   = torch.argsort(batch * len(nts) + ntIDs.long(), stable=True)  # → グラフ順
+    ntIDs   = ntIDs[order].to(c.DEVICE)
+    seq_len = seq_len[order].to('cpu')
+    
     x          = [data[node_type].x for node_type in c.HETERO_NODE_TYPES] # becuase of different input dimension for each node type
     target     = data['stock'].target.to(c.DEVICE)
-    ntIDs      = torch.cat([data[node_type].ntID       for node_type in c.HETERO_NODE_TYPES], dim=0).to(c.DEVICE)
     ntIDs_cpu  = ntIDs.to('cpu')
-    seq_len    = torch.cat([data[node_type].seq_len    for node_type in c.HETERO_NODE_TYPES], dim=0).to('cpu')
     edge_index = torch.cat([data[edge_type].edge_index for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=1).to(c.DEVICE)
     etIDs      = torch.cat([data[edge_type].etID       for edge_type in c.HETERO_EDGE_UNIT.keys()], dim=0).to(c.DEVICE)
 
     return x, seq_len, edge_index, ntIDs, ntIDs_cpu, etIDs, target
 
-
 class Classifier(nn.Module):
     def __init__(self, in_hid:int):
         super().__init__()
-        self.classifier = nn.Linear(in_hid, NUM_LABELS)  # Assuming 3 classes for classification
-        self.softmax = nn.Softmax(dim=1)  # Softmax for multi-class classification
+        self.classifier = nn.Linear(in_hid, len(c.CLASS_LABELS))  # 出力次元 = クラス数 (const.CLASS_LABELS)
+        # self.softmax = nn.Softmax(dim=1)  # Softmax for multi-class classification
 
     def forward(self, h):
-        return self.softmax(self.classifier(h))
+        return self.classifier(h)
+
 
 class myGRU(nn.Module):
     def __init__(self, hidden_size: int, bidirectional: bool = False):
@@ -85,14 +94,23 @@ class MarketHGTModel(nn.Module):
         self.gru = myGRU(out_hid, bidirectional)
         self.hgt_conv = conv.GNNModel(in_hid, out_hid, num_head, num_layers, dropout)
         self.classifier = Classifier(out_hid)
-        self.transform = torch.asinh
+        # z-score 用の統計量 (学習データから set_scaler で設定). buffer なので state_dict に保存され, 評価時も同じ値が使われる.
+        for nt, dim in c.NODE_TYPE_INPUT_NUM.items():
+            self.register_buffer(f"x_mean_{nt}", torch.zeros(dim))
+            self.register_buffer(f"x_std_{nt}" , torch.ones(dim))
+
+    def set_scaler(self, scaler: Dict[str, Tuple[torch.Tensor, torch.Tensor]]) -> None:
+        for nt, (mean, std) in scaler.items():
+            getattr(self, f"x_mean_{nt}").copy_(mean)
+            getattr(self, f"x_std_{nt}").copy_(std)
 
     def forward(self, data:HeteroData):
         # Get the data attributes
         x, seq_len, edge_index, ntIDs, ntIDs_cpu, etIDs, target = get_data_attr(data)
 
-        for i in range(len(x)):
-            x[i] = self.transform(x[i])  # Apply the transformation to each node type's features
+        # asinh は dataset.get で適用済み. ここでは z-score 正規化のみ行う.
+        for i, nt in enumerate(c.HETERO_NODE_TYPES):
+            x[i] = (x[i].to(DEVICE) - getattr(self, f"x_mean_{nt}")) / getattr(self, f"x_std_{nt}")
 
         # Pass through GRU
         h = self.gru(x, seq_len, ntIDs_cpu)  # Assuming node_type_i represents the node types for GRU
